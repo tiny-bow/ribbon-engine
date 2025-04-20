@@ -4,14 +4,25 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const zimalloc_dep = b.dependency("zimalloc", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const HostApi_mod = b.createModule(.{
         .root_source_file = b.path("src/framework/HostApi.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    const Module_mod = b.createModule(.{
-        .root_source_file = b.path("src/framework/Module.zig"),
+    const module_system_mod = b.createModule(.{
+        .root_source_file = b.path("src/framework/module_system.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const framework_mod = b.createModule(.{
+        .root_source_file = b.path("src/framework.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -20,19 +31,25 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
     });
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        // FIXME: currently, due to a bug in std.DynLib, we need libc really to have any globals in dyn libs.
+        .link_libc = true,
     });
 
-    Module_mod.addImport("HostApi", HostApi_mod);
-    exe_mod.addImport("HostApi", HostApi_mod);
-    exe_mod.addImport("Module", Module_mod);
-    lib_mod.addImport("HostApi", HostApi_mod);
+    HostApi_mod.addImport("zimalloc", zimalloc_dep.module("zimalloc"));
+
+    module_system_mod.addImport("HostApi", HostApi_mod);
+    framework_mod.addImport("HostApi", HostApi_mod);
+    framework_mod.addImport("module_system", module_system_mod);
+    
+    exe_mod.addImport("framework", framework_mod);
+
+    lib_mod.addImport("framework", framework_mod);
 
     const exe = b.addExecutable(.{
         .name = "proto1",

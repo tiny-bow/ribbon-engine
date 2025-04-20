@@ -1,11 +1,16 @@
 {
     "cSpell.words": [
+        "anyopaque",
         "callconv",
         "comptime",
+        "deinit",
         "errdefer",
         "libproto",
+        "memcpy",
         "orelse",
         "threadlocal",
-        "uninit"
+        "uninit",
+        "usize",
+        "zimalloc"
     ]
 }

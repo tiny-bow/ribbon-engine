@@ -1,8 +1,6 @@
 const std = @import("std");
 const log = std.log.scoped(.main);
-const HostApi = @import("HostApi");
-
-const Module = @import("Module");
+const G = @import("framework");
 
 pub const std_options = std.Options{
     .log_level = .info,
@@ -14,47 +12,38 @@ pub fn main() !void {
 
     const stderr_writer = std.io.getStdErr().writer();
 
-    var heap = HostApi.Heap{};
+    var heap = G.Heap{};
 
-    var api = HostApi{
+    var api = G.HostApi{
         .log = stderr_writer.any(),
         .allocator = .fromHeap(&heap),
         .heap = &heap,
     };
 
-    var mod = Module.open(&api, "zig-out/lib/libproto1.so") catch |err| {
+    var mod = G.Module.open(&api, .borrowed("zig-out/lib/libproto1.so"), .{}) catch |err| {
         log.err("failed to open module: {}", .{err});
         return err;
     };
     defer mod.close();
-
-    try mod.start();
     defer mod.stop() catch |err| {
         log.err("failed to stop module: {}", .{err});
     };
 
-    const watch_thread = try std.Thread.spawn(.{}, module_watch, .{ &api, mod });
+    const watcher = try G.Module.watch(&api);
     defer {
-        log.info("stopping watch thread ...", .{});
-        api.shutdown.store(true, .unordered);
-        watch_thread.join();
-        log.info("watch thread stopped; goodbye =]", .{});
+        log.info("end of main body", .{});
+        watcher.stop();
     }
 
-    while (true) {
-        try mod.step();
-    }
-}
-
-fn module_watch(api: *const HostApi, module: *Module) void {
     while (!api.shutdown.load(.unordered)) {
-        Module.mutex.lock();
-        defer Module.mutex.unlock();
+        G.ModuleWatcher.mutex.lock();
 
-        if (module.isDirty()) {
-            log.info("Module[{s}] is dirty", .{module.path});
-        }
+        mod.step() catch |err| {
+            log.err("failed to step module: {}; sleeping main thread 10s", .{err});
+            G.ModuleWatcher.mutex.unlock();
+            std.Thread.sleep(10 * std.time.ns_per_s);
+        };
 
-        std.Thread.sleep(5 * std.time.ns_per_s);
+        G.ModuleWatcher.mutex.unlock();
     }
 }
