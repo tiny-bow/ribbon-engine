@@ -1,0 +1,11 @@
+{
+    "cSpell.words": [
+        "callconv",
+        "comptime",
+        "errdefer",
+        "libproto",
+        "orelse",
+        "threadlocal",
+        "uninit"
+    ]
+}
