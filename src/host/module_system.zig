@@ -1,56 +1,25 @@
 const std = @import("std");
 const log = std.log.scoped(.module_system);
-
 const HostApi = @import("HostApi");
+const G = HostApi;
 
 var modules = std.StringArrayHashMap(*Module).init(std.heap.page_allocator);
 var meta_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 var path_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
-pub fn View(comptime T: type) type {
-    return union(enum) {
-        const Self = @This();
 
-        owned_buf: []T,
-        borrowed_buf: []const T,
-
-        pub fn owned(b: []T) Self {
-            return Self{ .owned_buf = b };
-        }
-
-        pub fn borrowed(b: []const T) Self {
-            return Self{ .borrowed_buf = b };
-        }
-
-        pub fn toOwned(self: Self, allocator: std.mem.Allocator) std.mem.Allocator.Error![]T {
-            if (self == .owned_buf) return self.owned_buf;
-
-            return allocator.dupe(T, self.borrowed_buf);
-        }
-
-        pub fn toBorrowed(self: Self) []const T {
-            return switch (self) {
-                inline else => |x| x,
-            };
-        }
-
-        pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
-            if (self == .owned_buf) allocator.free(self.owned_buf);
-        }
-    };
-}
 
 pub const Module = extern struct {
     // these fields are set by the module; on_start must be set by the dyn lib's initializer
-    on_start: *const fn () callconv(.c) HostApi.Signal,
-    on_stop: ?*const fn () callconv(.c) HostApi.Signal = null,
-    on_step: ?*const fn () callconv(.c) HostApi.Signal = null,
+    on_start: *const fn () callconv(.c) G.Signal,
+    on_stop: ?*const fn () callconv(.c) G.Signal = null,
+    on_step: ?*const fn () callconv(.c) G.Signal = null,
 
     // these fields are set by the module system just before calling on_start
     host: *HostApi = undefined,
     meta: *Meta = undefined,
 
-    pub fn open(api: *HostApi, modulePath: View(u8), options: struct {
+    pub fn open(api: *HostApi, modulePath: G.View(u8), options: struct {
         handle_existing: enum { cached, re_open, only_once } = .cached,
     }) !*Module {
         log.info("opening Module[{s}]", .{modulePath.toBorrowed()});
@@ -225,8 +194,9 @@ pub const Module = extern struct {
         self.meta.state = .stopped;
     }
 
-    pub const watch = Watcher.watch;
 };
+
+pub const watch = Watcher.watch;
 
 pub const Meta = struct {
     dyn_lib: std.DynLib = undefined,

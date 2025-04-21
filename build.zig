@@ -18,20 +18,20 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const HostApi_mod = b.createModule(.{
-        .root_source_file = b.path("src/framework/HostApi.zig"),
+    const Application_mod = b.createModule(.{
+        .root_source_file = b.path("src/host/Application.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const module_system_mod = b.createModule(.{
-        .root_source_file = b.path("src/framework/module_system.zig"),
+        .root_source_file = b.path("src/host/module_system.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    const framework_mod = b.createModule(.{
-        .root_source_file = b.path("src/framework/framework.zig"),
+    const HostApi_mod = b.createModule(.{
+        .root_source_file = b.path("src/HostApi.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -46,21 +46,23 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/host/main.zig"),
         .target = target,
         .optimize = optimize,
-        // FIXME: currently, due to a bug in std.DynLib, we need libc really to have any globals in dyn libs.
+        // FIXME: currently, due to a bug in std.DynLib, we need libc on host in order to have any globals in dyn libs.
         .link_libc = true,
     });
 
-    HostApi_mod.addImport("zimalloc", zimalloc_dep.module("zimalloc"));
+    Application_mod.addImport("zimalloc", zimalloc_dep.module("zimalloc"));
+    Application_mod.addImport("zlfw", zlfw_dep.module("zlfw"));
+    Application_mod.addImport("zgl", zgl_dep.module("zgl"));
+    Application_mod.addImport("HostApi", HostApi_mod);
+    Application_mod.addImport("module_system", module_system_mod);
 
     module_system_mod.addImport("HostApi", HostApi_mod);
-    framework_mod.addImport("HostApi", HostApi_mod);
-    framework_mod.addImport("module_system", module_system_mod);
     
-    exe_mod.addImport("framework", framework_mod);
-    exe_mod.addImport("zlfw", zlfw_dep.module("zlfw"));
-    exe_mod.addImport("zgl", zgl_dep.module("zgl"));
+    exe_mod.addImport("Application", Application_mod);
 
-    gl_mod.addImport("framework", framework_mod);
+    gl_mod.addImport("HostApi", HostApi_mod);
+    gl_mod.addImport("zlfw", zlfw_dep.module("zlfw"));
+    gl_mod.addImport("zgl", zgl_dep.module("zgl"));
 
     const exe = b.addExecutable(.{
         .name = "host",

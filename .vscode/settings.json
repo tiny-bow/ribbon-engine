@@ -1,15 +1,18 @@
 {
     "cSpell.words": [
         "anyopaque",
+        "anytype",
         "callconv",
         "comptime",
         "deinit",
         "errdefer",
+        "GLbitfield",
         "memcpy",
         "orelse",
         "threadlocal",
         "uninit",
         "usize",
+        "vtable",
         "zimalloc",
         "zlfw"
     ]

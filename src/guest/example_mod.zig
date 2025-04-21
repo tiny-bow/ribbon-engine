@@ -1,4 +1,4 @@
-const G = @import("framework");
+const G = @import("HostApi");
 const std = @import("std");
 const log = std.log.scoped(.example_module);
 

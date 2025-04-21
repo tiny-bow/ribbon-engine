@@ -5,7 +5,7 @@
             "name": "C++ Launch",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/zig-out/bin/proto1",
+            "program": "${workspaceFolder}/zig-out/bin/host",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
