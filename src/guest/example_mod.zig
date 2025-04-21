@@ -10,7 +10,7 @@ pub const std_options = std.Options{
             const level_txt = comptime message_level.asText();
             const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
 
-            api.host.log.print(level_txt ++ prefix2 ++ format ++ "\n", args) catch return;
+            g.host.log.print(level_txt ++ prefix2 ++ format ++ "\n", args) catch return;
         }
     }.log,
 };
@@ -20,6 +20,8 @@ pub export var api = G.Module {
     .on_step = module_step,
     .on_stop = module_stop,
 };
+
+const g = &api;
 
 export fn module_start() callconv(.c) G.Signal {
     // Start the module

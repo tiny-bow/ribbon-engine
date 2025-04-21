@@ -169,6 +169,22 @@ pub const Module = extern struct {
         };
     }
 
+    pub fn shutdown() void {
+        for (modules.values()) |mod| mod.stop() catch |err| {
+            log.err("failed to stop Module[{s}]: {}", .{mod.meta.path, err});
+        };
+        for (modules.values()) |mod| mod.close();
+    }
+
+    pub fn update() !void {
+        for (modules.values()) |mod| {
+            mod.step() catch |err| {
+                log.err("failed to step Module[{s}]: {}", .{mod.meta.path, err});
+                return err;
+            };
+        }
+    }
+
     pub fn step(self: *Module) error{ InvalidModuleStateTransition, StepModuleFailed }!void {
         const callback = if (self.on_step) |step_callback| step_callback else return;
 

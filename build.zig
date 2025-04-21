@@ -9,6 +9,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const zlfw_dep = b.dependency("zlfw", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const zgl_dep = b.dependency("zgl", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const HostApi_mod = b.createModule(.{
         .root_source_file = b.path("src/framework/HostApi.zig"),
         .target = target,
@@ -22,19 +31,19 @@ pub fn build(b: *std.Build) void {
     });
 
     const framework_mod = b.createModule(.{
-        .root_source_file = b.path("src/framework.zig"),
+        .root_source_file = b.path("src/framework/framework.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    const lib_mod = b.createModule(.{
-        .root_source_file = b.path("src/lib.zig"),
+    const gl_mod = b.createModule(.{
+        .root_source_file = b.path("src/guest/gl.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/host/main.zig"),
         .target = target,
         .optimize = optimize,
         // FIXME: currently, due to a bug in std.DynLib, we need libc really to have any globals in dyn libs.
@@ -48,29 +57,31 @@ pub fn build(b: *std.Build) void {
     framework_mod.addImport("module_system", module_system_mod);
     
     exe_mod.addImport("framework", framework_mod);
+    exe_mod.addImport("zlfw", zlfw_dep.module("zlfw"));
+    exe_mod.addImport("zgl", zgl_dep.module("zgl"));
 
-    lib_mod.addImport("framework", framework_mod);
+    gl_mod.addImport("framework", framework_mod);
 
     const exe = b.addExecutable(.{
-        .name = "proto1",
+        .name = "host",
         .root_module = exe_mod,
     });
 
-    const lib = b.addLibrary(.{
+    const gl = b.addLibrary(.{
         .linkage = .dynamic,
-        .name = "proto1",
-        .root_module = lib_mod,
+        .name = "gl",
+        .root_module = gl_mod,
     });
 
     const install = b.default_step;
     install.dependOn(&b.addInstallArtifact(exe, .{}).step);
-    install.dependOn(&b.addInstallArtifact(lib, .{}).step);
+    install.dependOn(&b.addInstallArtifact(gl, .{}).step);
 
-    const build_lib = b.step("lib", "Build the hcm");
-    build_lib.dependOn(&b.addInstallArtifact(lib, .{}).step);
+    const lib = b.step("lib", "Build the modules");
+    lib.dependOn(&b.addInstallArtifact(gl, .{}).step);
 
     const run = b.step("run", "Run the proto");
 
-    run.dependOn(&b.addInstallArtifact(lib, .{}).step);
+    exe.step.dependOn(lib);
     run.dependOn(&b.addRunArtifact(exe).step);
 }

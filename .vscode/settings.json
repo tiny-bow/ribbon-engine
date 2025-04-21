@@ -5,12 +5,12 @@
         "comptime",
         "deinit",
         "errdefer",
-        "libproto",
         "memcpy",
         "orelse",
         "threadlocal",
         "uninit",
         "usize",
-        "zimalloc"
+        "zimalloc",
+        "zlfw"
     ]
 }
