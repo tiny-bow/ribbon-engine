@@ -77,6 +77,22 @@ pub fn init() !*Application {
             }
         }
     }.gl_debug_handler);
+
+    log.info("vendor: {?s}", .{zgl.getString(.vendor)});
+    log.info("renderer: {?s}", .{zgl.getString(.renderer)});
+    log.info("version: {?s}", .{zgl.getString(.version)});
+    log.info("shading language version: {?s}", .{zgl.getString(.shading_language_version)});
+    log.info("glsl version: {?s}", .{zgl.getString(.shading_language_version)});
+    log.info("extensions: {?s}", .{zgl.getString(.extensions)});
+
+    const maj = zgl.getInteger(.major_version);
+    const min = zgl.getInteger(.minor_version);
+    log.info("{}.{}", .{maj, min});
+    if (maj != 4 or min < 5) {
+        log.warn("OpenGL version is {}.{} but 4.5 was requested", .{maj, min});
+    }
+    
+    std.debug.assert(@as(?*const anyopaque, @ptrCast(zgl.binding.function_pointers.glCreateVertexArrays)) != null);
     
     zgl.viewport(0, 0, width, height);
 
@@ -86,6 +102,9 @@ pub fn init() !*Application {
     self.collection_allocator = try CollectionAllocator.init(std.heap.page_allocator);
 
     self.api.log = self.stderr_writer.any();
+
+    self.api.reload = std.atomic.Value(G.ReloadType).init(.none);
+    self.api.shutdown = std.atomic.Value(bool).init(false);
 
     self.api.heap.collection = G.CollectionAllocator {
         .backing_allocator = &self.collection_allocator,
@@ -139,23 +158,7 @@ pub fn init() !*Application {
 
         self.watcher = try module_system.watch(&self.api);
 
-        const module_dir = "zig-out/lib/";
-
-        var moduleDir = try std.fs.cwd().openDir(module_dir, .{ .iterate = true });
-        defer moduleDir.close();
-
-        var it = moduleDir.iterate();
-
-        while (try it.next()) |entry| {
-            if (entry.kind == .directory) {
-                log.warn("skipping directory: {s}", .{entry.name});
-                continue;
-            }
-
-            const path = try std.fs.path.join(self.api.allocator.temp, &.{module_dir, entry.name});
-
-            _ = try module_system.Module.open(&self.api, .borrowed(path), .{});
-        }
+        try module_system.load_all(&self.api);
     }
 
     return self;
@@ -172,19 +175,90 @@ pub fn deinit(self: *Application) void {
     zlfw.deinit();
 }
 
+pub fn reload(self: *Application, rld: G.ReloadType) !void {
+    var hard_reload = rld == .hard;
+
+    // TODO: reverse order unload
+    
+    log.info("reloading Module(s) ...", .{});
+
+    if (!hard_reload) {
+        load_loop: for (module_system.modules.keys()) |modPath| {
+            _ = module_system.Module.open(&self.api, .owned(@constCast(modPath)), .{.handle_existing = .re_open}) catch |err| {
+                log.err("failed to reload Module[{s}]: {}", .{modPath, err});
+                hard_reload = true;
+                break :load_loop;
+            };
+        }
+    }
+
+    if (!hard_reload) return;
+
+    log.warn("hard reload required ...", .{});
+
+    const keys = self.api.allocator.temp.alloc([]const u8, module_system.modules.keys().len) catch @panic("OOM");
+
+    for (module_system.modules.keys(), 0..) |modPath, i| {
+        keys[i] = self.api.allocator.temp.dupe(u8, modPath) catch @panic("OOM");
+    }
+
+
+    for (module_system.modules.values()) |mod| {
+        mod.close();
+    }
+
+    module_system.modules.clearRetainingCapacity();
+
+    self.api.heap.collection.reset();
+    _ = self.api.heap.frame.reset(.retain_capacity);
+    _ = self.api.heap.last_frame.reset(.retain_capacity);
+    _ = self.api.heap.long_term.reset(.retain_capacity);
+
+    for (keys) |modPath| {
+        _ = module_system.Module.open(&self.api, .borrowed(@constCast(modPath)), .{}) catch |err| {
+            std.debug.panic("failed to hard reload Module[{s}]: {}", .{modPath, err});
+        };
+    }
+
+    _ = self.api.heap.temp.reset(.retain_capacity);
+}
+
 pub fn loop(self: *Application) void {
+    const error_sleep_time = 10;
+
     loop: while (!self.window.shouldClose() and !self.api.shutdown.load(.unordered)) {
         @branchHint(.likely);
+
+        const rld = self.api.reload.load(.acquire);
+        if (rld != .none) {
+            @branchHint(.cold);
+            log.info("{s} reload requested", .{@tagName(rld)});
+            
+            module_system.Watcher.mutex.lock();
+            
+            self.reload(rld) catch |err| {
+                @branchHint(.cold);
+                log.err("failed to reload: {}; sleeping main thread {}s", .{err, error_sleep_time});
+                self.api.reload.store(.hard, .release);
+                module_system.Watcher.mutex.unlock();
+                std.Thread.sleep(error_sleep_time * std.time.ns_per_s);
+                continue :loop;
+            };
+
+            self.api.reload.store(.none, .release);
+
+            module_system.Watcher.mutex.unlock();
+
+            continue :loop;
+        }
         
         zlfw.pollEvents();
 
         module_system.Watcher.mutex.lock();
 
-        const error_sleep_time = 10;
-
-        module_system.Module.update() catch |err| {
+        module_system.update() catch |err| {
             @branchHint(.cold);
-            log.err("failed to step modules: {}; sleeping main thread {}s", .{error_sleep_time, err});
+            log.err("failed to step modules: {}; sleeping main thread {}s", .{err, error_sleep_time});
             module_system.Watcher.mutex.unlock();
             std.Thread.sleep(error_sleep_time * std.time.ns_per_s);
             continue :loop;
@@ -233,9 +307,10 @@ pub const Api = struct {
     pub const gl = struct {
         pub fn createVertexArray(self: *const G.Api.gl) callconv(.c) G.Gl.VertexArray {
             _ = self;
-            const vao = zgl.genVertexArray();
-            zgl.bindVertexArray(vao);
-            return enumCast(G.Gl.VertexArray, vao);
+            const vao = zgl.createVertexArray();
+            const out = enumCast(G.Gl.VertexArray, vao);
+            log.info("created vao: {x}, {x}", .{@intFromEnum(vao), @intFromEnum(out)});
+            return out;
         }
 
         pub fn deleteVertexArray(self: *const G.Api.gl, vao: G.Gl.VertexArray) callconv(.c) void {
@@ -309,10 +384,9 @@ pub const Api = struct {
         }
 
 
-        pub fn createBuffer(self: *const G.Api.gl, target: G.Gl.BufferTarget) callconv(.c) G.Gl.Buffer {
+        pub fn createBuffer(self: *const G.Api.gl) callconv(.c) G.Gl.Buffer {
             _ = self;
-            const buffer = zgl.genBuffer();
-            buffer.bind(enumCast(zgl.BufferTarget, target));
+            const buffer = zgl.createBuffer();
             return enumCast(G.Gl.Buffer, buffer);
         }
 
@@ -338,17 +412,17 @@ pub const Api = struct {
 
         pub fn namedBufferData(self: *const G.Api.gl, buffer: G.Gl.Buffer, size: u32, data: ?*const anyopaque, usage: G.Gl.BufferUsage) callconv(.c) void {
             _ = self;
-            zgl.binding.bufferData(@intFromEnum(buffer), @intCast(size), data, @intFromEnum(usage));
+            zgl.binding.namedBufferData(@intFromEnum(buffer), @intCast(size), data, @intFromEnum(usage));
         }
 
         pub fn namedBufferSubData(self: *const G.Api.gl, buffer: G.Gl.Buffer, offset: u32, size: u32, data: ?*const anyopaque) callconv(.c) void {
             _ = self;
-            zgl.binding.bufferSubData(@intFromEnum(buffer), offset, @intCast(size), data);
+            zgl.binding.namedBufferSubData(@intFromEnum(buffer), offset, @intCast(size), data);
         }
 
         pub fn namedBufferStorage(self: *const G.Api.gl, buffer: G.Gl.Buffer, size: u32, data: ?*const anyopaque, flags: G.Gl.BufferStorageFlags) callconv(.c) void {
             _ = self;
-            zgl.binding.bufferStorage(@intFromEnum(buffer), @intCast(size), data, convert_buffer_storage_flags(flags));
+            zgl.binding.namedBufferStorage(@intFromEnum(buffer), @intCast(size), data, convert_buffer_storage_flags(flags));
         }
 
         pub fn mapNamedBuffer(self: *const G.Api.gl, buffer: G.Gl.Buffer, access: G.Gl.MapAccess, out: **anyopaque) callconv(.c) G.Signal {
@@ -366,7 +440,7 @@ pub const Api = struct {
 
         pub fn unmapNamedBuffer(self: *const G.Api.gl, buffer: G.Gl.Buffer) callconv(.c) bool {
             _ = self;
-            return zgl.binding.unmapBuffer(@intFromEnum(buffer)) == 1;
+            return zgl.binding.unmapNamedBuffer(@intFromEnum(buffer)) == 1;
         }
 
 

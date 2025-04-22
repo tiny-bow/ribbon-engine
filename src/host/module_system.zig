@@ -2,11 +2,52 @@ const std = @import("std");
 const log = std.log.scoped(.module_system);
 const HostApi = @import("HostApi");
 const G = HostApi;
+const zlfw = @import("zlfw");
 
-var modules = std.StringArrayHashMap(*Module).init(std.heap.page_allocator);
-var meta_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-var path_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+pub var modules = std.StringArrayHashMap(*Module).init(std.heap.page_allocator);
+pub var meta_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+pub var path_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 
+pub var module_dir_path = "./zig-out/lib/";
+
+pub fn shutdown() void {
+    for (modules.values()) |mod| mod.stop() catch |err| {
+        log.err("failed to stop Module[{s}]: {}", .{mod.meta.path, err});
+    };
+    for (modules.values()) |mod| mod.close();
+}
+
+pub fn update() !void {
+    for (modules.values()) |mod| {
+        mod.step() catch |err| {
+            log.err("failed to step Module[{s}]: {}", .{mod.meta.path, err});
+            return err;
+        };
+    }
+}
+
+pub fn load_all(api: *HostApi) !void {
+    const cwd = std.fs.cwd();
+    var moduleDir = cwd.openDir(module_dir_path, .{ .iterate = true }) catch |err| {
+        const cwd_path = cwd.realpathAlloc(api.allocator.temp, ".") catch { return err; };
+        log.err("cannot open module directory [{s}] from [{s}]: {}", .{module_dir_path, cwd_path, err });
+        return err;
+    };
+    defer moduleDir.close();
+
+    var it = moduleDir.iterate();
+
+    while (try it.next()) |entry| {
+        if (entry.kind == .directory) {
+            log.warn("skipping directory: {s}", .{entry.name});
+            continue;
+        }
+
+        const path = try std.fs.path.join(api.allocator.temp, &.{module_dir_path, entry.name});
+
+        _ = try Module.open(api, .borrowed(path), .{});
+    }
+}
 
 
 pub const Module = extern struct {
@@ -35,8 +76,13 @@ pub const Module = extern struct {
                     return error.ModuleAlreadyLoaded;
                 },
                 .re_open => {
-                    log.info("Module[{s}] already loaded, reloading", .{modulePath.toBorrowed()});
+                    log.info("Module[{s}] already loaded, soft reloading", .{modulePath.toBorrowed()});
                     
+                    existing_module.stop() catch |err| {
+                        log.err("failed to stop Module[{s}]: {}", .{existing_module.meta.path, err});
+                        return err;
+                    };
+
                     existing_module.meta.dyn_lib.close();
                 },
             }
@@ -126,32 +172,16 @@ pub const Module = extern struct {
 
         _ = modules.orderedRemove(self.meta.path);
         // arena only frees the top, so this is best effort;
-        // however the modules should get unloaded in reverse order sooo...? maybe? doesnt hurt.
+        // however the modules should get unloaded in reverse order so...? maybe? doesnt hurt.
         path_arena.allocator().free(self.meta.path);
         self.meta.dyn_lib.close();
     }
 
     pub fn lookup(self: *Module, comptime T: type, name: []const u8) error{MissingSymbol}!*T {
         return self.meta.dyn_lib.lookup(*T, name) orelse {
-            log.err("failed to find [{s}].{s}", .{ self.meta.path, name });
+            log.err("failed to find Module[{s}].{s}", .{ self.meta.path, name });
             return error.MissingSymbol;
         };
-    }
-
-    pub fn shutdown() void {
-        for (modules.values()) |mod| mod.stop() catch |err| {
-            log.err("failed to stop Module[{s}]: {}", .{mod.meta.path, err});
-        };
-        for (modules.values()) |mod| mod.close();
-    }
-
-    pub fn update() !void {
-        for (modules.values()) |mod| {
-            mod.step() catch |err| {
-                log.err("failed to step Module[{s}]: {}", .{mod.meta.path, err});
-                return err;
-            };
-        }
     }
 
     pub fn step(self: *Module) error{ InvalidModuleStateTransition, StepModuleFailed }!void {
@@ -212,36 +242,39 @@ pub const Watcher = struct {
     pub var mutex = std.Thread.Mutex{};
 
     pub var sleep_time: u64 = 5 * std.time.ns_per_s;
+    pub var dirty_sleep_multiplier: u64 = 2;
 
     pub fn watch(api: *HostApi) !Watcher {
         const watch_thread = try std.Thread.spawn(.{.allocator = api.allocator.static}, struct {
             pub fn watcher(host: *HostApi) void {
+                log.info("starting Module watcher ...", .{});
+
                 while (!host.shutdown.load(.unordered)) {
+                    log.info("module watcher run ...", .{});
+                    var dirty = false;
                     {
                         mutex.lock();
                         defer mutex.unlock();
 
-                        var dirty = false;
-                        for (modules.values()) |mod| {
+                        dirty_loop: for (modules.values()) |mod| {
                             if (mod.isDirty()) {
                                 dirty = true;
-                                break;
+                                break :dirty_loop;
                             }
                         }
 
                         if (dirty) {
-                            log.info("Module(s) dirty, reloading ...", .{});
-
-                            for (modules.keys()) |modPath| {
-                                _ = Module.open(host, .owned(@constCast(modPath)), .{.handle_existing = .re_open}) catch |err| {
-                                    log.err("failed to reload Module[{s}]: {}", .{modPath, err});
-                                };
-                            }
+                            log.info("Module(s) dirty, requesting reload ...", .{});
+                            host.reload.store(.soft, .release);
+                        } else {
+                            log.info("Module(s) clean, no reload needed", .{});
                         }
                     }
                     
-                    std.Thread.sleep(sleep_time);
+                    std.Thread.sleep(if (dirty) sleep_time * dirty_sleep_multiplier else sleep_time);
                 }
+
+                log.info("Module watcher stopping ...", .{});
             }
         }.watcher, .{ api });
 

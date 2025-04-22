@@ -7,11 +7,17 @@ const zgl = @import("zgl");
 log: std.io.AnyWriter,
 allocator: AllocatorSet,
 heap: Heap,
-shutdown: std.atomic.Value(bool) = .init(false),
+reload: std.atomic.Value(ReloadType),
+shutdown: std.atomic.Value(bool),
 
 win: Api.win,
 gl: Api.gl,
 
+pub const ReloadType = enum(i8) {
+    hard = -1,
+    none = 0,
+    soft = 1,
+};
 pub const Signal = enum(i8) {
     panic = -1,
     okay = 0,
@@ -44,7 +50,7 @@ pub const Api = struct {
         host_vertexAttribPointer: *const fn (self: *const Self, index: u32, size: u32, ty: Gl.Type, normalized: bool, stride: u32, offset: u32) callconv(.c) void,
         host_vertexAttribIPointer: *const fn (self: *const Self, index: u32, size: u32, ty: Gl.Type, stride: u32, offset: u32) callconv(.c) void,
         host_enableVertexAttribArray: *const fn (self: *const Self, index: u32) callconv(.c) void,
-        host_createBuffer: *const fn (self: *const Self, target: Gl.BufferTarget) callconv(.c) Gl.Buffer,
+        host_createBuffer: *const fn (self: *const Self) callconv(.c) Gl.Buffer,
         host_bindBuffer: *const fn (self: *const Self, buffer: Gl.Buffer, target: Gl.BufferTarget) callconv(.c) void,
         host_bufferData: *const fn (self: *const Self, target: Gl.BufferTarget, size: u32, data: ?*const anyopaque, usage: Gl.BufferUsage) callconv(.c) void,
         host_deleteBuffer: *const fn (self: *const Self, buffer: Gl.Buffer) callconv(.c) void,
@@ -88,7 +94,12 @@ pub const Api = struct {
         host_drawArrays: *const fn (self: *const Self, mode: Gl.Primitive, first: u32, count: u32) callconv(.c) void,
         host_drawElements: *const fn (self: *const Self, mode: Gl.Primitive, count: u32, ty: Gl.Type, indices: u32) callconv(.c) void,
 
-        pub fn createVertexArray(self: *const Self) Gl.VertexArray { return self.host_createVertexArray(self, ); }
+        pub fn createVertexArray(self: *const Self) Gl.VertexArray {
+            const out = self.host_createVertexArray(self);
+            std.log.info("createVertexArray wrapper {x}", .{out});
+            return out;
+        }
+
         pub fn deleteVertexArray(self: *const Self, vao: Gl.VertexArray) void { return self.host_deleteVertexArray(self, vao); }
         pub fn bindVertexArray(self: *const Self, vao: Gl.VertexArray) void { return self.host_bindVertexArray(self, vao); }
         pub fn unbindVertexArray(self: *const Self) void { return self.host_unbindVertexArray(self); }
@@ -103,7 +114,7 @@ pub const Api = struct {
         pub fn vertexAttribPointer(self: *const Self, index: u32, size: u32, ty: Gl.Type, normalized: bool, stride: u32, offset: u32) void { return self.host_vertexAttribPointer(self, index, size, ty, normalized, stride, offset); }
         pub fn vertexAttribIPointer(self: *const Self, index: u32, size: u32, ty: Gl.Type, stride: u32, offset: u32) void { return self.host_vertexAttribIPointer(self, index, size, ty, stride, offset); }
         pub fn enableVertexAttribArray(self: *const Self, index: u32) void { return self.host_enableVertexAttribArray(self, index); }
-        pub fn createBuffer(self: *const Self, target: Gl.BufferTarget) Gl.Buffer { return self.host_createBuffer(self, target); }
+        pub fn createBuffer(self: *const Self) Gl.Buffer { return self.host_createBuffer(self); }
         pub fn bindBuffer(self: *const Self, buffer: Gl.Buffer, target: Gl.BufferTarget) void { return self.host_bindBuffer(self, buffer, target); }
         pub fn bufferData(self: *const Self, target: Gl.BufferTarget, size: u32, data: ?*const anyopaque, usage: Gl.BufferUsage) void { return self.host_bufferData(self, target, size, data, usage); }
         pub fn unbindBuffer(self: *const Self, target: Gl.BufferTarget) void { return self.host_unbindBuffer(self, target); }

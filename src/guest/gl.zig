@@ -1,8 +1,6 @@
 const G = @import("HostApi");
 const std = @import("std");
 const log = std.log.scoped(.gl);
-const zgl = @import("zgl");
-const zlfw = @import("zlfw");
 
 pub const std_options = std.Options{
     .log_level = .info,
@@ -54,7 +52,7 @@ const fragmentShaderSource =
     \\out vec4 FragColor;
     \\void main()
     \\{
-    \\   FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f); // Orange color
+    \\   FragColor = vec4(0.0f, 0.0f, 1.0f, 1.0f);
     \\}
     ;
 
@@ -68,17 +66,17 @@ pub fn on_start() !void {
 
     log.info("g: {}", .{g});
 
-    self.vao = g.gl.createVertexArray();
-    log.info("vao: {x}", .{@intFromEnum(self.vao)});
+    const new_vao = g.gl.createVertexArray();
+    self.vao = new_vao;
+    log.info("vao: {x} {x}", .{@intFromEnum(new_vao), self.vao});
 
-    g.gl.bindVertexArray(self.vao);
-
-    self.vbo = g.gl.createBuffer(.array_buffer);
+    self.vbo = g.gl.createBuffer();
+    g.gl.bindBuffer(self.vbo, .array_buffer);
     g.gl.vertexArrayVertexBuffer(self.vao, self.vbo, 0, 0, @sizeOf(Vertex));
     log.info("vbo: {x}", .{@intFromEnum(self.vbo)});
     
-    g.gl.bufferData(
-        .array_buffer,
+    g.gl.namedBufferData(
+        self.vbo,
         @sizeOf(Vertex) * vertices.len,
         vertices.ptr,
         .static_draw,
@@ -101,10 +99,6 @@ pub fn on_start() !void {
 
     g.gl.enableVertexArrayAttrib(self.vao, 0);
     log.info("enabled attrib", .{});
-
-    g.gl.bindVertexArray(.invalid);
-    g.gl.bindBuffer(.invalid, .array_buffer);
-    log.info("unbound", .{});
     
 
     self.shader_program = shader_program: {

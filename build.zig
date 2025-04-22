@@ -61,8 +61,6 @@ pub fn build(b: *std.Build) void {
     exe_mod.addImport("Application", Application_mod);
 
     gl_mod.addImport("HostApi", HostApi_mod);
-    gl_mod.addImport("zlfw", zlfw_dep.module("zlfw"));
-    gl_mod.addImport("zgl", zgl_dep.module("zgl"));
 
     const exe = b.addExecutable(.{
         .name = "host",
