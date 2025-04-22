@@ -14,4 +14,6 @@ pub fn main() !void {
     defer app.deinit();
 
     app.loop();
+
+    log.info("main end", .{});
 }

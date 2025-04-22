@@ -11,10 +11,17 @@ pub var path_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 pub var module_dir_path = "./zig-out/lib/";
 
 pub fn shutdown() void {
+    log.info("stopping all modules ...", .{});
     for (modules.values()) |mod| mod.stop() catch |err| {
         log.err("failed to stop Module[{s}]: {}", .{mod.meta.path, err});
     };
+    log.info("closing all modules ...", .{});
     for (modules.values()) |mod| mod.close();
+    log.info("all modules closed", .{});
+    modules.clearAndFree();
+    _ = meta_arena.reset(.free_all);
+    _ = path_arena.reset(.free_all);
+    log.info("module system shutdown complete", .{});
 }
 
 pub fn update() !void {
@@ -241,16 +248,16 @@ pub const Watcher = struct {
 
     pub var mutex = std.Thread.Mutex{};
 
-    pub var sleep_time: u64 = 5 * std.time.ns_per_s;
+    pub var sleep_time: u64 = 1 * std.time.ns_per_s;
     pub var dirty_sleep_multiplier: u64 = 2;
 
     pub fn watch(api: *HostApi) !Watcher {
-        const watch_thread = try std.Thread.spawn(.{.allocator = api.allocator.static}, struct {
+        const watch_thread = try std.Thread.spawn(.{}, struct {
             pub fn watcher(host: *HostApi) void {
                 log.info("starting Module watcher ...", .{});
 
                 while (!host.shutdown.load(.unordered)) {
-                    log.info("module watcher run ...", .{});
+                    log.debug("module watcher run ...", .{});
                     var dirty = false;
                     {
                         mutex.lock();
@@ -264,10 +271,10 @@ pub const Watcher = struct {
                         }
 
                         if (dirty) {
-                            log.info("Module(s) dirty, requesting reload ...", .{});
+                            log.debug("Module(s) dirty, requesting reload ...", .{});
                             host.reload.store(.soft, .release);
                         } else {
-                            log.info("Module(s) clean, no reload needed", .{});
+                            log.debug("Module(s) clean, no reload needed", .{});
                         }
                     }
                     
@@ -286,7 +293,7 @@ pub const Watcher = struct {
 
     pub fn stop(self: Watcher) void {
         log.info("stopping Watcher ...", .{});
-        self.api.shutdown.store(true, .unordered);
+        self.api.shutdown.store(true, .release);
         self.thread.join();
         log.info("Watcher stopped", .{});
     }

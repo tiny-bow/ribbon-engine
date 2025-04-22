@@ -166,13 +166,31 @@ pub fn init() !*Application {
 
 /// * only call this function from the main thread
 pub fn deinit(self: *Application) void {
-    // TODO: cleanup watcher (& any other threads)
-    // TODO: cleanup modules
-    // TODO: cleanup allocators
-
+    log.info("closing window ...", .{});
     self.window.deinit();
 
+    self.watcher.stop();
+
+    module_system.shutdown();
+
+    log.info("de-initializing allocators ...", .{});
+
+    self.collection_allocator.deinit();
+    self.api.heap.temp.deinit();
+    self.api.heap.last_frame.deinit();
+    self.api.heap.frame.deinit();
+    self.api.heap.long_term.deinit();
+    self.api.heap.static.deinit();
+
+    log.info("shutting down middleware ...", .{});
+
     zlfw.deinit();
+
+    log.info("final cleanup ...", .{});
+
+    std.heap.page_allocator.destroy(self);
+
+    log.info("application closed; goodbye 💝", .{});
 }
 
 pub fn reload(self: *Application, rld: G.ReloadType) !void {
