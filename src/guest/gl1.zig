@@ -169,7 +169,22 @@ pub fn on_start() !void {
     log.info("draw: {x}", .{@intFromPtr(&draw)});
 }
 
-pub export fn draw() callconv(.c) void {
+comptime {
+    @export(&struct {
+        pub fn wrapper() callconv(.c) G.Signal {
+            draw() catch |err| {
+                log.err("draw error: {s}", .{err});
+                return .panic;
+            };
+
+            return .okay;
+        }
+    }.wrapper, std.builtin.ExportOptions {
+        .name = "draw",
+    });
+}
+
+pub fn draw() !void {
     g.gl.clearColor(0.2, 0.3, 0.3, 1.0);
     g.gl.clear(.{ .color = true, .depth = true, .stencil = true });
     g.gl.useProgram(self.shader_program);

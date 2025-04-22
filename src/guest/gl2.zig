@@ -14,7 +14,9 @@ pub const std_options = std.Options{
 };
 
 var self: struct {
-    draw: *const fn () callconv(.c) G.Signal,
+    imports: struct {
+        draw: *const fn () callconv(.c) G.Signal,
+    },
 } = undefined;
 
 var g: *G = undefined;
@@ -28,14 +30,18 @@ pub fn on_start() !void {
 
     const gl1 = try g.module.lookupModule("gl1");
 
-    self.draw = @alignCast(@ptrCast(try g.module.lookupAddress(gl1, "draw")));
+    self.imports.draw = @alignCast(@ptrCast(try g.module.lookupAddress(gl1, "draw")));
 
-    log.info("self.draw: {x}", .{@intFromPtr(self.draw)});
+    log.info("self.draw: {x}", .{@intFromPtr(self.imports.draw)});
+}
+
+pub fn draw() !void {
+    switch (self.imports.draw()) {
+        .okay => {},
+        .panic => return error.CallFailed,
+    }
 }
 
 pub fn on_step() !void {
-    switch (self.draw()) {
-        .okay => {},
-        .panic => return error.DrawCallFailed,
-    }
+    try draw();
 }

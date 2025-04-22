@@ -1,5 +1,6 @@
 {
     "cSpell.words": [
+        "anyerror",
         "anyopaque",
         "anytype",
         "callconv",
@@ -11,6 +12,7 @@
         "memcpy",
         "orelse",
         "realpath",
+        "sysv",
         "threadlocal",
         "uninit",
         "usize",
