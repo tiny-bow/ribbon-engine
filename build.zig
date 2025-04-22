@@ -36,8 +36,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const gl_mod = b.createModule(.{
-        .root_source_file = b.path("src/guest/gl.zig"),
+    const gl1_mod = b.createModule(.{
+        .root_source_file = b.path("src/guest/gl1.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const gl2_mod = b.createModule(.{
+        .root_source_file = b.path("src/guest/gl2.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -57,31 +63,39 @@ pub fn build(b: *std.Build) void {
     Application_mod.addImport("module_system", module_system_mod);
 
     module_system_mod.addImport("HostApi", HostApi_mod);
+    module_system_mod.addImport("zimalloc", zimalloc_dep.module("zimalloc"));
     
     exe_mod.addImport("Application", Application_mod);
 
-    gl_mod.addImport("HostApi", HostApi_mod);
+    gl1_mod.addImport("HostApi", HostApi_mod);
+    gl2_mod.addImport("HostApi", HostApi_mod);
 
     const exe = b.addExecutable(.{
         .name = "host",
         .root_module = exe_mod,
     });
 
-    const gl = b.addLibrary(.{
+    const gl1 = b.addLibrary(.{
         .linkage = .dynamic,
-        .name = "gl",
-        .root_module = gl_mod,
+        .name = "gl1",
+        .root_module = gl1_mod,
     });
+
+    const gl2 = b.addLibrary(.{
+        .linkage = .dynamic,
+        .name = "gl2",
+        .root_module = gl2_mod,
+    });
+
+    const lib = b.step("lib", "Build the modules");
+    lib.dependOn(&b.addInstallArtifact(gl1, .{}).step);
+    lib.dependOn(&b.addInstallArtifact(gl2, .{}).step);
+
+    exe.step.dependOn(lib);
 
     const install = b.default_step;
     install.dependOn(&b.addInstallArtifact(exe, .{}).step);
-    install.dependOn(&b.addInstallArtifact(gl, .{}).step);
-
-    const lib = b.step("lib", "Build the modules");
-    lib.dependOn(&b.addInstallArtifact(gl, .{}).step);
 
     const run = b.step("run", "Run the proto");
-
-    exe.step.dependOn(lib);
     run.dependOn(&b.addRunArtifact(exe).step);
 }

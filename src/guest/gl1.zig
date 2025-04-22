@@ -1,15 +1,12 @@
 const G = @import("HostApi");
 const std = @import("std");
-const log = std.log.scoped(.gl);
+const log = std.log.scoped(.gl1);
 
 pub const std_options = std.Options{
     .log_level = .info,
     .logFn = struct {
         pub fn log(comptime message_level: std.log.Level, comptime scope: @TypeOf(.enum_literal), comptime format: []const u8, args: anytype) void {
-            const level_txt = comptime message_level.asText();
-            const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
-
-            api.host.log.print(level_txt ++ prefix2 ++ format ++ "\n", args) catch return;
+            api.host.log.message(message_level, scope, format, args);
         }
     }.log,
 };
@@ -52,19 +49,19 @@ const fragmentShaderSource =
     \\out vec4 FragColor;
     \\void main()
     \\{
-    \\   FragColor = vec4(1.0f, 0.0f, 1.0f, 1.0f);
+    \\   FragColor = vec4(1.0f, 0.25f, 1.0f, 1.0f);
     \\}
     ;
 
 
 
 pub fn on_start() !void {
-    log.info("gl starting...", .{});
+    log.info("gl1 starting...", .{});
     log.info("api.host: {x}", .{@intFromPtr(api.host)});
 
     g = api.host;
 
-    log.info("g: {}", .{g});
+    log.info("g: {x}", .{@intFromPtr(g)});
 
     const new_vao = g.gl.createVertexArray();
     self.vao = new_vao;
@@ -168,9 +165,11 @@ pub fn on_start() !void {
 
         break :shader_program shader_program;
     };
+
+    log.info("draw: {x}", .{@intFromPtr(&draw)});
 }
 
-pub fn on_step() !void {
+pub export fn draw() callconv(.c) void {
     g.gl.clearColor(0.2, 0.3, 0.3, 1.0);
     g.gl.clear(.{ .color = true, .depth = true, .stencil = true });
     g.gl.useProgram(self.shader_program);

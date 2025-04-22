@@ -4,12 +4,13 @@ const std = @import("std");
 
 const zgl = @import("zgl");
 
-log: std.io.AnyWriter,
 allocator: AllocatorSet,
 heap: Heap,
 reload: std.atomic.Value(ReloadType),
 shutdown: std.atomic.Value(bool),
 
+log: Api.log,
+module: Api.module,
 win: Api.win,
 gl: Api.gl,
 
@@ -24,6 +25,47 @@ pub const Signal = enum(i8) {
 };
 
 pub const Api = struct {
+    pub const log = struct {
+        const Self = @This();
+
+        host_log: std.io.AnyWriter,
+        host_lock_mutex: *const fn (*const Self) callconv(.c) void,
+        host_unlock_mutex: *const fn (*const Self) callconv(.c) void,
+
+        pub fn message(self: *const Self, comptime level: std.log.Level, comptime scope: @TypeOf(.enum_literal), comptime format: []const u8, args: anytype) void {
+            const level_txt = comptime level.asText();
+            const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
+
+            self.host_lock_mutex(self);
+            defer self.host_unlock_mutex(self);
+
+            self.host_log.print(level_txt ++ prefix2 ++ format ++ "\n", args) catch return;
+        }
+    };
+
+    pub const module = struct {
+        const Self = @This();
+
+        host_lookupModule: *const fn(self: *const Self, name: *const []const u8, out: **Module) callconv(.c) Signal,
+        host_lookupAddress: *const fn(self: *const Self, ref: *Module, name: *const [:0]const u8, out: **anyopaque) callconv(.c) Signal,
+
+        pub fn lookupModule(self: *const Self, name: []const u8) error{ModuleNotFound}!*Module {
+            var out: *Module = undefined;
+            return switch (self.host_lookupModule(self, &name, &out)) {
+                .okay => out,
+                .panic => error.ModuleNotFound,
+            };
+        }
+
+        pub fn lookupAddress(self: *const Self, ref: *Module, name: [:0]const u8) error{UnboundSymbol}!*anyopaque {
+            var out: *anyopaque = undefined;
+            return switch (self.host_lookupAddress(self, ref, &name, &out)) {
+                .okay => out,
+                .panic => error.UnboundSymbol,
+            };
+        }
+    };
+
     pub const win = struct {
         const Self = @This();
 
@@ -414,7 +456,7 @@ pub const Module = extern struct {
                 }
             }.module_start,
             
-            .on_step = struct {
+            .on_step = if (comptime @hasDecl(ns, "on_step")) struct {
                 pub export fn module_step() callconv(.c) Signal {
                     ns.on_step() catch |err| {
                         log.err("failed to step module: {}", .{err});
@@ -423,9 +465,9 @@ pub const Module = extern struct {
 
                     return .okay;
                 }
-            }.module_step,
+            }.module_step else null,
 
-            .on_stop = struct {
+            .on_stop = if (comptime @hasDecl(ns, "on_stop")) struct {
                 pub export fn module_stop() callconv(.c) Signal {
                     ns.on_stop() catch |err| {
                         log.err("failed to stop module: {}", .{err});
@@ -434,7 +476,7 @@ pub const Module = extern struct {
 
                     return .okay;
                 }
-            }.module_stop,
+            }.module_stop else null,
         };
     }
 };

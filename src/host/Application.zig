@@ -1,7 +1,7 @@
 const Application = @This();
 
 const std = @import("std");
-const log = std.log.scoped(.application);
+const app_log = std.log.scoped(.application);
 
 const zlfw = @import("zlfw");
 const zgl = @import("zgl");
@@ -78,18 +78,18 @@ pub fn init() !*Application {
         }
     }.gl_debug_handler);
 
-    log.info("vendor: {?s}", .{zgl.getString(.vendor)});
-    log.info("renderer: {?s}", .{zgl.getString(.renderer)});
-    log.info("version: {?s}", .{zgl.getString(.version)});
-    log.info("shading language version: {?s}", .{zgl.getString(.shading_language_version)});
-    log.info("glsl version: {?s}", .{zgl.getString(.shading_language_version)});
-    log.info("extensions: {?s}", .{zgl.getString(.extensions)});
+    app_log.info("vendor: {?s}", .{zgl.getString(.vendor)});
+    app_log.info("renderer: {?s}", .{zgl.getString(.renderer)});
+    app_log.info("version: {?s}", .{zgl.getString(.version)});
+    app_log.info("shading language version: {?s}", .{zgl.getString(.shading_language_version)});
+    app_log.info("glsl version: {?s}", .{zgl.getString(.shading_language_version)});
+    app_log.info("extensions: {?s}", .{zgl.getString(.extensions)});
 
     const maj = zgl.getInteger(.major_version);
     const min = zgl.getInteger(.minor_version);
-    log.info("{}.{}", .{maj, min});
+    app_log.info("{}.{}", .{maj, min});
     if (maj != 4 or min < 5) {
-        log.warn("OpenGL version is {}.{} but 4.5 was requested", .{maj, min});
+        app_log.warn("OpenGL version is {}.{} but 4.5 was requested", .{maj, min});
     }
     
     std.debug.assert(@as(?*const anyopaque, @ptrCast(zgl.binding.function_pointers.glCreateVertexArrays)) != null);
@@ -100,8 +100,6 @@ pub fn init() !*Application {
 
     self.stderr_writer = std.io.getStdErr().writer();
     self.collection_allocator = try CollectionAllocator.init(std.heap.page_allocator);
-
-    self.api.log = self.stderr_writer.any();
 
     self.api.reload = std.atomic.Value(G.ReloadType).init(.none);
     self.api.shutdown = std.atomic.Value(bool).init(false);
@@ -166,14 +164,14 @@ pub fn init() !*Application {
 
 /// * only call this function from the main thread
 pub fn deinit(self: *Application) void {
-    log.info("closing window ...", .{});
+    app_log.info("closing window ...", .{});
     self.window.deinit();
 
     self.watcher.stop();
 
-    module_system.shutdown();
+    module_system.deinit();
 
-    log.info("de-initializing allocators ...", .{});
+    app_log.info("de-initializing allocators ...", .{});
 
     self.collection_allocator.deinit();
     self.api.heap.temp.deinit();
@@ -182,63 +180,29 @@ pub fn deinit(self: *Application) void {
     self.api.heap.long_term.deinit();
     self.api.heap.static.deinit();
 
-    log.info("shutting down middleware ...", .{});
+    app_log.info("shutting down middleware ...", .{});
 
     zlfw.deinit();
 
-    log.info("final cleanup ...", .{});
+    app_log.info("final cleanup ...", .{});
 
     std.heap.page_allocator.destroy(self);
 
-    log.info("application closed; goodbye 💝", .{});
+    app_log.info("application closed; goodbye 💝", .{});
 }
 
 pub fn reload(self: *Application, rld: G.ReloadType) !void {
-    var hard_reload = rld == .hard;
+    if (rld == .hard) {
+        self.api.heap.collection.reset();
+        _ = self.api.heap.frame.reset(.retain_capacity);
+        _ = self.api.heap.last_frame.reset(.retain_capacity);
+        _ = self.api.heap.long_term.reset(.retain_capacity);
+        _ = self.api.heap.temp.reset(.retain_capacity);
 
-    // TODO: reverse order unload
-    
-    log.info("reloading Module(s) ...", .{});
-
-    if (!hard_reload) {
-        load_loop: for (module_system.modules.keys()) |modPath| {
-            _ = module_system.Module.open(&self.api, .owned(@constCast(modPath)), .{.handle_existing = .re_open}) catch |err| {
-                log.err("failed to reload Module[{s}]: {}", .{modPath, err});
-                hard_reload = true;
-                break :load_loop;
-            };
-        }
+        try module_system.reload(&self.api, .hard);
+    } else {
+        try module_system.reload(&self.api, .soft);
     }
-
-    if (!hard_reload) return;
-
-    log.warn("hard reload required ...", .{});
-
-    const keys = self.api.allocator.temp.alloc([]const u8, module_system.modules.keys().len) catch @panic("OOM");
-
-    for (module_system.modules.keys(), 0..) |modPath, i| {
-        keys[i] = self.api.allocator.temp.dupe(u8, modPath) catch @panic("OOM");
-    }
-
-
-    for (module_system.modules.values()) |mod| {
-        mod.close();
-    }
-
-    module_system.modules.clearRetainingCapacity();
-
-    self.api.heap.collection.reset();
-    _ = self.api.heap.frame.reset(.retain_capacity);
-    _ = self.api.heap.last_frame.reset(.retain_capacity);
-    _ = self.api.heap.long_term.reset(.retain_capacity);
-
-    for (keys) |modPath| {
-        _ = module_system.Module.open(&self.api, .borrowed(@constCast(modPath)), .{}) catch |err| {
-            std.debug.panic("failed to hard reload Module[{s}]: {}", .{modPath, err});
-        };
-    }
-
-    _ = self.api.heap.temp.reset(.retain_capacity);
 }
 
 pub fn loop(self: *Application) void {
@@ -250,13 +214,13 @@ pub fn loop(self: *Application) void {
         const rld = self.api.reload.load(.acquire);
         if (rld != .none) {
             @branchHint(.cold);
-            log.info("{s} reload requested", .{@tagName(rld)});
+            app_log.info("{s} reload requested", .{@tagName(rld)});
             
             module_system.Watcher.mutex.lock();
             
             self.reload(rld) catch |err| {
                 @branchHint(.cold);
-                log.err("failed to reload: {}; sleeping main thread {}s", .{err, error_sleep_time});
+                app_log.err("failed to reload: {}; sleeping main thread {}s", .{err, error_sleep_time});
                 self.api.reload.store(.hard, .release);
                 module_system.Watcher.mutex.unlock();
                 std.Thread.sleep(error_sleep_time * std.time.ns_per_s);
@@ -274,9 +238,9 @@ pub fn loop(self: *Application) void {
 
         module_system.Watcher.mutex.lock();
 
-        module_system.update() catch |err| {
+        module_system.step() catch |err| {
             @branchHint(.cold);
-            log.err("failed to step modules: {}; sleeping main thread {}s", .{err, error_sleep_time});
+            app_log.err("failed to step modules: {}; sleeping main thread {}s", .{err, error_sleep_time});
             module_system.Watcher.mutex.unlock();
             std.Thread.sleep(error_sleep_time * std.time.ns_per_s);
             continue :loop;
@@ -313,6 +277,39 @@ fn convert_buffer_storage_flags(flags: G.Gl.BufferStorageFlags) zgl.binding.GLbi
 }
 
 pub const Api = struct {
+    pub const log = struct {
+        pub const log = std.io.getStdErr().writer().any();
+        
+        pub fn lock_mutex(self: *const G.Api.log) callconv(.c) void {
+            _ = self;
+            std.debug.lockStdErr();
+        }
+
+        pub fn unlock_mutex(self: *const G.Api.log) callconv(.c) void {
+            _ = self;
+            std.debug.unlockStdErr();
+        }
+    };
+
+    pub const module = struct {
+        pub fn lookupModule(self: *const G.Api.module, name: *const []const u8, out: **G.Module) callconv(.c) G.Signal {
+            _ = self;
+            out.* = @ptrCast(module_system.lookup(name.*) catch {
+                return .panic;
+            });
+            return .okay;
+        }
+
+        pub fn lookupAddress(self: *const G.Api.module, ref: *G.Module, name: *const [:0]const u8, out: **anyopaque) callconv(.c) G.Signal {
+            _ = self;
+            const mod: *module_system.Module = @alignCast(@constCast(@ptrCast(ref)));
+            out.* = mod.lookup(anyopaque, name.*) catch {
+                return .panic;
+            };
+            return .okay;
+        }
+    };
+
     pub const win = struct {
         pub fn close(self: *const G.Api.win) callconv(.c) void {
             const api: *HostApi = @constCast(@fieldParentPtr("win", self));
@@ -327,7 +324,7 @@ pub const Api = struct {
             _ = self;
             const vao = zgl.createVertexArray();
             const out = enumCast(G.Gl.VertexArray, vao);
-            log.info("created vao: {x}, {x}", .{@intFromEnum(vao), @intFromEnum(out)});
+            app_log.info("created vao: {x}, {x}", .{@intFromEnum(vao), @intFromEnum(out)});
             return out;
         }
 
@@ -490,7 +487,7 @@ pub const Api = struct {
         pub fn getShaderInfoLog(self: *const G.Api.gl, shader: G.Gl.Shader, allocator: *const std.mem.Allocator, out: *[:0]const u8) callconv(.c) G.Signal {
             _ = self;
             const buf = zgl.getShaderInfoLog(enumCast(zgl.Shader, shader), allocator.*) catch |err| {
-                log.err("failed to get shader info log: {}", .{err});
+                app_log.err("failed to get shader info log: {}", .{err});
                 return .panic;
             };
             out.* = buf;
@@ -585,7 +582,7 @@ pub const Api = struct {
         pub fn getProgramInfoLog(self: *const G.Api.gl, program: G.Gl.Program, allocator: *const std.mem.Allocator, out: *[:0]const u8) callconv(.c) G.Signal {
             _ = self;
             const buf = zgl.getProgramInfoLog(enumCast(zgl.Program, program), allocator.*) catch |err| {
-                log.err("failed to get program info log: {}", .{err});
+                app_log.err("failed to get program info log: {}", .{err});
                 return .panic;
             };
             out.* = buf;

@@ -1,43 +1,96 @@
 const std = @import("std");
 const log = std.log.scoped(.module_system);
+const builtin = @import("builtin");
 const HostApi = @import("HostApi");
 const G = HostApi;
 const zlfw = @import("zlfw");
+const zimalloc = @import("zimalloc");
 
 pub var modules = std.StringArrayHashMap(*Module).init(std.heap.page_allocator);
-pub var meta_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-pub var path_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+pub var meta_heap = zimalloc.Allocator(.{}).init(std.heap.page_allocator) catch @panic("no memory?");
+pub var name_heap = zimalloc.Allocator(.{}).init(std.heap.page_allocator) catch @panic("no memory?");
 
 pub var module_dir_path = "./zig-out/lib/";
+pub const dyn_lib_prefix = builtin.os.tag.libPrefix(builtin.abi);
+pub const dyn_lib_suffix = builtin.os.tag.dynamicLibSuffix();
 
-pub fn shutdown() void {
-    log.info("stopping all modules ...", .{});
-    for (modules.values()) |mod| mod.stop() catch |err| {
-        log.err("failed to stop Module[{s}]: {}", .{mod.meta.path, err});
+pub const ShutdownStyle = enum { soft, hard };
+
+pub fn nameSanitize(name: []const u8) []const u8 {
+    var trimmed = name;
+
+    if (std.mem.startsWith(u8, trimmed, dyn_lib_prefix)) {
+        trimmed = trimmed[dyn_lib_prefix.len..];
+    }
+
+    if (std.mem.endsWith(u8, trimmed, dyn_lib_suffix)) {
+        trimmed = trimmed[0..trimmed.len - dyn_lib_suffix.len];
+    }
+
+    return name_heap.allocator().dupe(u8, trimmed) catch @panic("OOM in module name heap");
+}
+
+pub fn nameToPath(api: *HostApi, name: []const u8) []const u8 {
+    const fileName = std.fmt.allocPrint(api.allocator.temp, "{s}{s}{s}", .{
+        if (!std.mem.startsWith(u8, name, dyn_lib_prefix)) dyn_lib_prefix else "",
+        name,
+        if (!std.mem.endsWith(u8, name, dyn_lib_suffix)) dyn_lib_suffix else "",
+    }) catch @panic("OOM in temp allocator");
+    return std.fs.path.join(api.allocator.temp, &.{module_dir_path, fileName}) catch @panic("OOM in temp allocator");
+}
+
+pub const watch = Watcher.watch;
+
+pub fn deinit() void {
+    log.info("de-initializing module system ...", .{});
+    shutdown(.soft) catch |err| {
+        log.err("failed to shutdown module system: {}", .{err});
     };
+    modules.deinit();
+    meta_heap.deinit();
+    name_heap.deinit();
+    log.info("module system deinit complete", .{});
+}
+
+pub fn shutdown(style: ShutdownStyle) !void {
+    log.info("module system shutting down {s} ...", .{@tagName(style)});
+    const mods = modules.values();
+    if (style != .hard) {
+        for (0..mods.len) |i| {
+            const j = mods.len - i - 1;
+            log.info("stopping module {}/{}", .{j, mods.len});
+            const mod = mods[j];
+            mod.stop() catch |err| {
+                log.err("failed to stop Module[{s}]: {}", .{mod.meta.name, err});
+                return err;
+            };
+        }
+    }
     log.info("closing all modules ...", .{});
-    for (modules.values()) |mod| mod.close();
+    while (modules.count() > 0) {
+        modules.values()[modules.count() - 1].close();
+    }
     log.info("all modules closed", .{});
     modules.clearAndFree();
-    _ = meta_arena.reset(.free_all);
-    _ = path_arena.reset(.free_all);
     log.info("module system shutdown complete", .{});
 }
 
-pub fn update() !void {
+pub fn step() !void {
     for (modules.values()) |mod| {
         mod.step() catch |err| {
-            log.err("failed to step Module[{s}]: {}", .{mod.meta.path, err});
+            log.err("failed to step Module[{s}]: {}", .{mod.meta.name, err});
             return err;
         };
     }
 }
 
 pub fn load_all(api: *HostApi) !void {
+    log.info("opening modules ...", .{});
+
     const cwd = std.fs.cwd();
     var moduleDir = cwd.openDir(module_dir_path, .{ .iterate = true }) catch |err| {
         const cwd_path = cwd.realpathAlloc(api.allocator.temp, ".") catch { return err; };
-        log.err("cannot open module directory [{s}] from [{s}]: {}", .{module_dir_path, cwd_path, err });
+        log.err("cannot open module directory [{s}] from cwd [{s}]: {}", .{module_dir_path, cwd_path, err });
         return err;
     };
     defer moduleDir.close();
@@ -50,12 +103,65 @@ pub fn load_all(api: *HostApi) !void {
             continue;
         }
 
-        const path = try std.fs.path.join(api.allocator.temp, &.{module_dir_path, entry.name});
-
-        _ = try Module.open(api, .borrowed(path), .{});
+        try Module.open(api, entry.name);
     }
+
+    log.info("all modules loaded: {s}", .{modules.keys()});
+
+    for (modules.values()) |mod| {
+        log.info("starting Module[{s}]", .{mod.meta.name});
+        mod.start() catch |err| {
+            log.err("failed to start Module[{s}]: {}", .{mod.meta.name, err});
+            return err;
+        };
+    }
+
+    log.info("all modules started", .{});
 }
 
+pub fn lookup(name: []const u8) error{ModuleNotFound}!*Module {
+    return modules.get(name) orelse {
+        log.err("Module[{s}] not found", .{name});
+        return error.ModuleNotFound;
+    };
+}
+
+pub fn reload(api: *HostApi, style: ShutdownStyle) !void {
+    log.info("reloading module system ...", .{});
+
+    const keys = api.allocator.temp.alloc([]const u8, modules.keys().len) catch @panic("OOM in temp allocator");
+
+    for (modules.keys(), 0..) |mod_name, i| {
+        keys[i] = api.allocator.temp.dupe(u8, mod_name) catch @panic("OOM in temp allocator");
+    }
+
+    log.info("copied loaded mod names", .{});
+
+    try shutdown(style);
+
+    for (keys) |mod_name| {
+        try Module.open(api, mod_name);
+    }
+
+    for (keys) |mod_name| {
+        log.info("restarting Module[{s}]", .{mod_name});
+
+        const mod = lookup(mod_name) catch unreachable;
+
+        try mod.start();
+    }
+
+    log.info("reloaded module system", .{});
+}
+
+
+pub const Meta = struct {
+    dyn_lib: std.DynLib,
+    latest: i128,
+    name: []const u8,
+    state: State,
+    pub const State = enum { init, started, stopped };
+};
 
 pub const Module = extern struct {
     // these fields are set by the module; on_start must be set by the dyn lib's initializer
@@ -63,183 +169,166 @@ pub const Module = extern struct {
     on_stop: ?*const fn () callconv(.c) G.Signal = null,
     on_step: ?*const fn () callconv(.c) G.Signal = null,
 
-    // these fields are set by the module system just before calling on_start
+    // fields following this line are set by the module system just before calling on_start
+
     host: *HostApi = undefined,
+
+    // fields following this line are hidden from HostApi
+
     meta: *Meta = undefined,
 
-    pub fn open(api: *HostApi, modulePath: G.View(u8), options: struct {
-        handle_existing: enum { cached, re_open, only_once } = .cached,
-    }) !*Module {
-        log.info("opening Module[{s}]", .{modulePath.toBorrowed()});
+    pub fn open(api: *HostApi, name: []const u8) !void {
+        log.info("opening Module[{s}]", .{name});
 
-        if (modules.get(modulePath.toBorrowed())) |existing_module| {
-            switch (options.handle_existing) {
-                .cached => {
-                    log.info("Module[{s}] already loaded, returning cached version", .{modulePath.toBorrowed()});
-                    return existing_module;
-                },
-                .only_once => {
-                    log.err("Module[{s}] already loaded, reload not allowed", .{modulePath.toBorrowed()});
-                    return error.ModuleAlreadyLoaded;
-                },
-                .re_open => {
-                    log.info("Module[{s}] already loaded, soft reloading", .{modulePath.toBorrowed()});
-                    
-                    existing_module.stop() catch |err| {
-                        log.err("failed to stop Module[{s}]: {}", .{existing_module.meta.path, err});
-                        return err;
-                    };
-
-                    existing_module.meta.dyn_lib.close();
-                },
-            }
-        } else {
-            log.info("Module[{s}] not yet loaded, loading", .{modulePath.toBorrowed()});
+        if (modules.contains(name)) {
+            log.err("Module[{s}] already loaded", .{name});
+            return error.ModuleAlreadyLoaded;
         }
 
-        const path = try modulePath.toOwned(path_arena.allocator());
-        errdefer path_arena.allocator().free(path);
+        const moduleName = nameSanitize(name);
+
+        const path = nameToPath(api, moduleName);
 
         const stat = std.fs.cwd().statFile(path) catch |err| {
-            log.err("failed to stat Module[{s}]: {}", .{ path, err });
+            log.err("failed to stat Module @ [{s}]: {}", .{ path, err });
             return err;
         };
 
-        log.info("Module[{s}] stat: {}", .{path, stat});
+        log.info("[{s}] stat: {}", .{path, stat});
 
         var dyn_lib = std.DynLib.open(path) catch |err| {
-            log.err("failed to open Module[{s}]: {}", .{ path, err });
+            log.err("failed to open Module @ [{s}]: {}", .{ path, err });
             return err;
         };
         errdefer dyn_lib.close();
 
 
-        log.info("Module[{s}] dyn lib opened successfully", .{path});
+        log.info("Module[{s}] dyn lib opened successfully", .{moduleName});
 
         const mod = if (dyn_lib.lookup(*Module, "api")) |module_ptr| module_ptr else {
-            log.err("failed to find [{s}].api", .{path});
+            log.err("failed to find Module[{s}].api", .{moduleName});
             return error.MissingModuleEntryPoint;
         };
 
-        log.info("Got Module[{s}] address: {x}", .{path, @intFromPtr(mod)});
+        log.info("got Module[{s}].api address: {x}", .{moduleName, @intFromPtr(mod)});
         
         mod.host = api;
-        mod.meta = try meta_arena.allocator().create(Meta);
-        errdefer meta_arena.allocator().destroy(mod.meta);
+        mod.meta = meta_heap.allocator().create(Meta) catch @panic("OOM in module meta heap");
+        errdefer meta_heap.allocator().destroy(mod.meta);
 
         mod.meta.* = Meta {
             .dyn_lib = dyn_lib,
             .latest = stat.mtime,
-            .path = path,
+            .name = moduleName,
             .state = .init,
         };
 
-        log.info("Wrote metadata for Module[{s}]", .{path});
+        log.info("Wrote metadata for Module[{s}]", .{moduleName});
 
-        const signal = mod.on_start();
+        modules.put(moduleName, mod) catch @panic("OOM in module cache");
+        log.info("Module[{s}] added to cache", .{moduleName});
+    }
 
-        log.info("Module[{s}] start callback returned: {s}", .{path, @tagName(signal)});
+    pub fn close(self: *Module) void {
+        log.info("closing Module[{s}]", .{self.meta.name});
 
-        switch (signal) {
-            .okay => {
-                log.info("Module[{s}] start callback set", .{path});
-            },
-            .panic => {
-                log.err("Module[{s}] start callback failed", .{path});
-                return error.StartModuleFailed;
-            },
+        if (self.meta.state == .started and self.on_stop != null) {
+            log.err("Module[{s}] not stopped at close; good luck memory usage 🤞 ...", .{self.meta.name});
         }
 
-        mod.meta.state = .started;
+        _ = modules.orderedRemove(self.meta.name);
+        
+        name_heap.allocator().free(self.meta.name);
+        meta_heap.allocator().destroy(self.meta);
 
-        try modules.put(path, mod);
-        log.info("Module[{s}] added to cache", .{path});
+        self.meta.dyn_lib.close();
 
-        return mod;
+        log.info("Module closed", .{});
+    }
+
+    pub fn lookup(self: *Module, comptime T: type, name: [:0]const u8) error{MissingSymbol}!*T {
+        return self.meta.dyn_lib.lookup(*T, name) orelse {
+            log.err("failed to find Module[{s}].{s}", .{ self.meta.name, name });
+            return error.MissingSymbol;
+        };
     }
 
     pub fn isDirty(self: *Module) bool {
-        const stat = std.fs.cwd().statFile(self.meta.path) catch |err| {
-            log.err("failed to stat Module[{s}]: {}", .{ self.meta.path, err });
+        const path = nameToPath(self.host, self.meta.name);
+
+        const stat = std.fs.cwd().statFile(path) catch |err| {
+            log.err("failed to stat Module @ [{s}]: {}", .{ path, err });
             return false;
         };
 
         if (stat.mtime != self.meta.latest) {
-            log.info("Module[{s}] is dirty", .{self.meta.path});
+            log.info("Module[{s}] is dirty", .{self.meta.name});
             return true;
         }
 
         return false;
     }
 
-    pub fn close(self: *Module) void {
-        if (self.meta.state == .started and self.on_stop != null) {
-            log.err("Module[{s}] not stopped at close; good luck memory usage 🤞 ...", .{self.meta.path});
+    pub fn start(self: *Module) !void {
+        log.info("starting Module[{s}]", .{self.meta.name});
+
+        const signal = self.on_start();
+
+        log.info("Module[{s}] start callback returned: {s}", .{self.meta.name, @tagName(signal)});
+
+        switch (signal) {
+            .okay => {
+                self.meta.state = .started;
+            },
+            .panic => {
+                return error.StartModuleFailed;
+            },
         }
-
-        _ = modules.orderedRemove(self.meta.path);
-        // arena only frees the top, so this is best effort;
-        // however the modules should get unloaded in reverse order so...? maybe? doesnt hurt.
-        path_arena.allocator().free(self.meta.path);
-        self.meta.dyn_lib.close();
-    }
-
-    pub fn lookup(self: *Module, comptime T: type, name: []const u8) error{MissingSymbol}!*T {
-        return self.meta.dyn_lib.lookup(*T, name) orelse {
-            log.err("failed to find Module[{s}].{s}", .{ self.meta.path, name });
-            return error.MissingSymbol;
-        };
     }
 
     pub fn step(self: *Module) error{ InvalidModuleStateTransition, StepModuleFailed }!void {
         const callback = if (self.on_step) |step_callback| step_callback else return;
 
         if (self.meta.state != .started) {
-            log.err("cannot step Module[{s}], it has not been started", .{self.meta.path});
+            log.err("cannot step Module[{s}], it has not been started", .{self.meta.name});
 
             return error.InvalidModuleStateTransition;
         }
 
         switch (callback()) {
             .okay => {
-                log.debug("Module[{s}] step successful", .{self.meta.path});
+                log.debug("Module[{s}] step successful", .{self.meta.name});
             },
             .panic => {
-                log.err("Module[{s}] step failed", .{self.meta.path});
+                log.err("Module[{s}] step failed", .{self.meta.name});
                 return error.StepModuleFailed;
             },
         }
     }
 
     pub fn stop(self: *Module) error{ InvalidModuleStateTransition, StopModuleFailed }!void {
-        const callback = if (self.on_stop) |stop_callback| stop_callback else return;
+        log.info("stopping Module[{s}]", .{self.meta.name});
 
         if (self.meta.state != .started) {
             return error.InvalidModuleStateTransition;
         }
 
-        switch (callback()) {
-            .okay => {
-                log.info("Module[{s}] stopped successfully", .{self.meta.path});
-            },
-            .panic => {
-                log.err("Module[{s}] stop failed", .{self.meta.path});
-                return error.StopModuleFailed;
-            },
+        if (self.on_stop) |stop_callback| {
+            switch (stop_callback()) {
+                .okay => {
+                    log.info("Module[{s}] stopped successfully", .{self.meta.name});
+                },
+                .panic => {
+                    log.err("Module[{s}] stop failed", .{self.meta.name});
+                    return error.StopModuleFailed;
+                },
+            }
+        } else {
+            log.info("Module[{s}] has no stop callback", .{self.meta.name});
         }
 
         self.meta.state = .stopped;
     }
-
-};
-
-pub const watch = Watcher.watch;
-
-pub const Meta = struct {
-    dyn_lib: std.DynLib = undefined,
-    latest: i128 = undefined,
-    path: []const u8 = undefined,
-    state: enum { uninit, init, started, stopped } = .uninit,
 };
 
 pub const Watcher = struct {
