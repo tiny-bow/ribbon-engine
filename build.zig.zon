@@ -9,12 +9,10 @@
             .hash = "zimalloc-0.0.0-ZWlxedheAQDRrwWs-e33WrMl1dFQ40BQSlMOxxItsCWl",
         },
         .zlfw = .{
-            .url = "git+https://github.com/Batres3/zlfw#de18d89e657fd10f0cb35cac5aced80e7c8dfd4f",
-            .hash = "zlfw-0.0.1-xkyo0bRWAwCRSZuln6y2XuZIZGzSufGMtTsK-ZqtojZU",
+            .path = "../rlfw",
         },
         .zgl = .{
-            .url = "git+https://github.com/ziglibs/zgl#bba18181488d527c603407a0f38a346aeb9829e4",
-            .hash = "zgl-1.1.0-p_NpAH2rCQCau2UOYRdNu2eC-_T4CMWcgpqpv8REofLl",
+            .path = "../rgl",
         },
     },
     .paths = .{

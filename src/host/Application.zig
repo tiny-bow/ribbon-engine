@@ -27,7 +27,7 @@ pub fn init() !*Application {
     const width = 800;
     const height = 600;
     const self = try std.heap.page_allocator.create(Application);
-    
+
     self.window = try zlfw.Window.init(width, height, "Triangle", null, null, .{
         .context = .{
             .version = .{
@@ -38,11 +38,11 @@ pub fn init() !*Application {
             .debug = true,
         },
     });
-    
+
     self.window.setFramebufferSizeCallback(framebufferSizeCallback);
 
     try zlfw.makeCurrentContext(self.window);
-    
+
     zgl.loadExtensions({}, struct {
         pub fn get_proc_address(_: void, symbol: [:0]const u8) ?zgl.binding.FunctionPointer {
             return zlfw.getProcAddress(symbol);
@@ -91,9 +91,9 @@ pub fn init() !*Application {
     if (maj != 4 or min < 5) {
         app_log.warn("OpenGL version is {}.{} but 4.5 was requested", .{maj, min});
     }
-    
-    std.debug.assert(@as(?*const anyopaque, @ptrCast(zgl.binding.function_pointers.glCreateVertexArrays)) != null);
-    
+
+    // std.debug.assert(@as(?*const anyopaque, @ptrCast(zgl.binding.function_pointers.glCreateVertexArrays)) != null);
+
     zgl.viewport(0, 0, width, height);
 
     try zlfw.swapInterval(0);
@@ -132,7 +132,7 @@ pub fn init() !*Application {
     self.api.heap.frame = .init(std.heap.page_allocator);
     self.api.heap.long_term = .init(std.heap.page_allocator);
     self.api.heap.static = .init(std.heap.page_allocator);
-    
+
     self.api.allocator.collection = self.api.heap.collection.allocator();
     self.api.allocator.temp = self.api.heap.temp.allocator();
     self.api.allocator.last_frame = self.api.heap.last_frame.allocator();
@@ -149,7 +149,7 @@ pub fn init() !*Application {
             @field(@field(self.api, lib_decl.name), "host_" ++ decl.name) = exp;
         }
     }
-    
+
     {
         module_system.Watcher.mutex.lock();
         defer module_system.Watcher.mutex.unlock();
@@ -215,9 +215,9 @@ pub fn loop(self: *Application) void {
         if (rld != .none) {
             @branchHint(.cold);
             app_log.info("{s} reload requested", .{@tagName(rld)});
-            
+
             module_system.Watcher.mutex.lock();
-            
+
             self.reload(rld) catch |err| {
                 @branchHint(.cold);
                 app_log.err("failed to reload: {}; sleeping main thread {}s", .{err, error_sleep_time});
@@ -233,7 +233,7 @@ pub fn loop(self: *Application) void {
 
             continue :loop;
         }
-        
+
         zlfw.pollEvents();
 
         module_system.Watcher.mutex.lock();
@@ -279,7 +279,7 @@ fn convert_buffer_storage_flags(flags: G.Gl.BufferStorageFlags) zgl.binding.GLbi
 pub const Api = struct {
     pub const log = struct {
         pub const log = std.io.getStdErr().writer().any();
-        
+
         pub fn lock_mutex(self: *const G.Api.log) callconv(.c) void {
             _ = self;
             std.debug.lockStdErr();
@@ -568,7 +568,7 @@ pub const Api = struct {
             _ = self;
             zgl.programUniform4f(enumCast(zgl.Program, program), location, v0, v1, v2, v3);
         }
-        
+
         pub fn programUniformMatrix4fv(self: *const G.Api.gl, program: G.Gl.Program, location: u32, count: u32, transpose: bool, value: [*]const f32) callconv(.c) void {
             _ = self;
             zgl.binding.programUniformMatrix4fv(@intFromEnum(program), @intCast(location), @intCast(count), @intFromBool(transpose), value);
