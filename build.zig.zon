@@ -8,10 +8,10 @@
             .url = "git+https://github.com/dweiller/zimalloc#4c79c3a18b882e725d11be7b191d4c6b031945f0",
             .hash = "zimalloc-0.0.0-ZWlxedheAQDRrwWs-e33WrMl1dFQ40BQSlMOxxItsCWl",
         },
-        .zlfw = .{
+        .rlfw = .{
             .path = "../rlfw",
         },
-        .zgl = .{
+        .rgl = .{
             .path = "../rgl",
         },
     },

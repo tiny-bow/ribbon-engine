@@ -3,7 +3,7 @@ const log = std.log.scoped(.module_system);
 const builtin = @import("builtin");
 const HostApi = @import("HostApi");
 const G = HostApi;
-const zlfw = @import("zlfw");
+const rlfw = @import("rlfw");
 const zimalloc = @import("zimalloc");
 
 pub var modules = std.StringArrayHashMap(*Module).init(std.heap.page_allocator);
@@ -211,7 +211,7 @@ pub const Module = extern struct {
         };
 
         log.info("got Module[{s}].api address: {x}", .{moduleName, @intFromPtr(mod)});
-        
+
         mod.host = api;
         mod.meta = meta_heap.allocator().create(Meta) catch @panic("OOM in module meta heap");
         errdefer meta_heap.allocator().destroy(mod.meta);
@@ -237,7 +237,7 @@ pub const Module = extern struct {
         }
 
         _ = modules.orderedRemove(self.meta.name);
-        
+
         name_heap.allocator().free(self.meta.name);
         meta_heap.allocator().destroy(self.meta);
 
@@ -366,7 +366,7 @@ pub const Watcher = struct {
                             log.debug("Module(s) clean, no reload needed", .{});
                         }
                     }
-                    
+
                     std.Thread.sleep(if (dirty) sleep_time * dirty_sleep_multiplier else sleep_time);
                 }
 

@@ -9,11 +9,11 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const zlfw_dep = b.dependency("zlfw", .{
+    const rlfw_dep = b.dependency("rlfw", .{
         .target = target,
         .optimize = optimize,
     });
-    const zgl_dep = b.dependency("zgl", .{
+    const rgl_dep = b.dependency("rgl", .{
         .target = target,
         .optimize = optimize,
     });
@@ -57,8 +57,8 @@ pub fn build(b: *std.Build) void {
     });
 
     Application_mod.addImport("zimalloc", zimalloc_dep.module("zimalloc"));
-    Application_mod.addImport("zlfw", zlfw_dep.module("zlfw"));
-    Application_mod.addImport("zgl", zgl_dep.module("zgl"));
+    Application_mod.addImport("rlfw", rlfw_dep.module("rlfw"));
+    Application_mod.addImport("rgl", rgl_dep.module("rgl"));
     Application_mod.addImport("HostApi", HostApi_mod);
     Application_mod.addImport("module_system", module_system_mod);
 

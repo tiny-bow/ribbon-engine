@@ -2,7 +2,7 @@ const HostApi = @This();
 
 const std = @import("std");
 
-const zgl = @import("zgl");
+const rgl = @import("rgl");
 
 allocator: AllocatorSet,
 heap: Heap,
@@ -323,7 +323,7 @@ pub const Gl = struct {
         unsigned_int_2_10_10_10_rev = 0x8368,
         unsigned_int_10_f_11_f_11_f_rev = 0x8C3B,
     };
-    
+
     pub const ShaderType = enum(u32) {
         compute = 0x91B9,
         vertex = 0x8B31,
@@ -402,7 +402,7 @@ pub const Gl = struct {
 
     pub const Capability = enum(u32) {
         blend = 0x0BE2,
-        // clip_distance = zgl.binding.CLIP_DISTANCE,
+        // clip_distance = rgl.binding.CLIP_DISTANCE,
         color_logic_op = 0x0BF2,
         cull_face = 0x0B44,
         debug_output = 0x92E0,
@@ -455,7 +455,7 @@ pub const Module = extern struct {
                     return .okay;
                 }
             }.module_start,
-            
+
             .on_step = if (comptime @hasDecl(ns, "on_step")) struct {
                 pub export fn module_step() callconv(.c) Signal {
                     ns.on_step() catch |err| {
