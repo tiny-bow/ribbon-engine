@@ -64,7 +64,7 @@ pub fn build(b: *std.Build) void {
 
     module_system_mod.addImport("HostApi", HostApi_mod);
     module_system_mod.addImport("zimalloc", zimalloc_dep.module("zimalloc"));
-    
+
     exe_mod.addImport("Application", Application_mod);
 
     gl1_mod.addImport("HostApi", HostApi_mod);
