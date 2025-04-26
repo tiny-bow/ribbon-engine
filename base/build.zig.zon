@@ -1,0 +1,16 @@
+.{
+    .name = .proto1,
+    .version = "0.1.0-draft",
+    .fingerprint = 0xbaf44f46fc7cf7b5,
+    .minimum_zig_version = "0.15.0-dev.151+6e8493daa",
+    .dependencies = .{
+        .ribbon_engine = .{
+            .path = "../",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "root.zig",
+    },
+}

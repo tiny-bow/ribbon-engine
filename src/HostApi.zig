@@ -4,13 +4,14 @@ const std = @import("std");
 
 const rgl = @import("rgl");
 
+cwd: std.fs.Dir,
 allocator: AllocatorSet,
 heap: Heap,
 reload: std.atomic.Value(ReloadType),
 shutdown: std.atomic.Value(bool),
 
 log: Api.log,
-module: Api.module,
+binary: Api.binary,
 win: Api.win,
 gl: Api.gl,
 
@@ -43,21 +44,21 @@ pub const Api = struct {
         }
     };
 
-    pub const module = struct {
+    pub const binary = struct {
         const Self = @This();
 
-        host_lookupModule: *const fn(self: *const Self, name: *const []const u8, out: **Module) callconv(.c) Signal,
-        host_lookupAddress: *const fn(self: *const Self, ref: *Module, name: *const [:0]const u8, out: **anyopaque) callconv(.c) Signal,
+        host_lookupBinary: *const fn(self: *const Self, name: *const []const u8, out: **Binary) callconv(.c) Signal,
+        host_lookupAddress: *const fn(self: *const Self, ref: *Binary, name: *const [:0]const u8, out: **anyopaque) callconv(.c) Signal,
 
-        pub fn lookupModule(self: *const Self, name: []const u8) error{ModuleNotFound}!*Module {
-            var out: *Module = undefined;
-            return switch (self.host_lookupModule(self, &name, &out)) {
+        pub fn lookupBinary(self: *const Self, name: []const u8) error{BinaryNotFound}!*Binary {
+            var out: *Binary = undefined;
+            return switch (self.host_lookupBinary(self, &name, &out)) {
                 .okay => out,
-                .panic => error.ModuleNotFound,
+                .panic => error.BinaryNotFound,
             };
         }
 
-        pub fn lookupAddress(self: *const Self, ref: *Module, name: [:0]const u8) error{UnboundSymbol}!*anyopaque {
+        pub fn lookupAddress(self: *const Self, ref: *Binary, name: [:0]const u8) error{UnboundSymbol}!*anyopaque {
             var out: *anyopaque = undefined;
             return switch (self.host_lookupAddress(self, ref, &name, &out)) {
                 .okay => out,
@@ -432,51 +433,51 @@ pub const Gl = struct {
     };
 };
 
-pub const Module = extern struct {
-    // these fields are set by the module; on_start must be set by the dyn lib's initializer
+pub const Binary = extern struct {
+    // these fields are set by the binary; on_start must be set by the dyn lib's initializer
     on_start: *const fn () callconv(.c) Signal,
     on_stop: ?*const fn () callconv(.c) Signal = null,
     on_step: ?*const fn () callconv(.c) Signal = null,
 
-    // this field is set by the module system just before calling on_start
+    // this field is set by the binary system just before calling on_start
     host: *HostApi = undefined,
 
-    pub fn fromNamespace(comptime ns: type) Module {
+    pub fn fromNamespace(comptime ns: type) Binary {
         const log = std.log.scoped(.api);
 
-        return Module {
+        return Binary {
             .on_start = struct {
-                pub export fn module_start() callconv(.c) Signal {
+                pub export fn binary_start() callconv(.c) Signal {
                     ns.on_start() catch |err| {
-                        log.err("failed to start module: {}", .{err});
+                        log.err("failed to start binary: {}", .{err});
                         return .panic;
                     };
 
                     return .okay;
                 }
-            }.module_start,
+            }.binary_start,
 
             .on_step = if (comptime @hasDecl(ns, "on_step")) struct {
-                pub export fn module_step() callconv(.c) Signal {
+                pub export fn binary_step() callconv(.c) Signal {
                     ns.on_step() catch |err| {
-                        log.err("failed to step module: {}", .{err});
+                        log.err("failed to step binary: {}", .{err});
                         return .panic;
                     };
 
                     return .okay;
                 }
-            }.module_step else null,
+            }.binary_step else null,
 
             .on_stop = if (comptime @hasDecl(ns, "on_stop")) struct {
-                pub export fn module_stop() callconv(.c) Signal {
+                pub export fn binary_stop() callconv(.c) Signal {
                     ns.on_stop() catch |err| {
-                        log.err("failed to stop module: {}", .{err});
+                        log.err("failed to stop binary: {}", .{err});
                         return .panic;
                     };
 
                     return .okay;
                 }
-            }.module_stop else null,
+            }.binary_stop else null,
         };
     }
 };
@@ -518,41 +519,6 @@ pub const Heap = struct {
     long_term: std.heap.ArenaAllocator,
     static: std.heap.ArenaAllocator,
 };
-
-pub fn View(comptime T: type) type {
-    return union(enum) {
-        const Self = @This();
-
-        owned_buf: []T,
-        borrowed_buf: []const T,
-
-        pub fn owned(b: []T) Self {
-            return Self{ .owned_buf = b };
-        }
-
-        pub fn borrowed(b: []const T) Self {
-            return Self{ .borrowed_buf = b };
-        }
-
-        pub fn toOwned(self: Self, allocator: std.mem.Allocator) std.mem.Allocator.Error![]T {
-            if (self == .owned_buf) return self.owned_buf;
-
-            return allocator.dupe(T, self.borrowed_buf);
-        }
-
-        pub fn toBorrowed(self: Self) []const T {
-            return switch (self) {
-                inline else => |x| x,
-            };
-        }
-
-        pub fn deinit(self: Self, allocator: std.mem.Allocator) void {
-            if (self == .owned_buf) allocator.free(self.owned_buf);
-        }
-    };
-}
-
-
 
 pub const Key = enum(u8) {
     close_menu,

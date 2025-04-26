@@ -11,7 +11,7 @@ pub const std_options = std.Options{
     }.log,
 };
 
-pub export var api = G.Module.fromNamespace(@This());
+pub export var api = G.Binary.fromNamespace(@This());
 
 var self: struct {
     vao: G.Gl.VertexArray,
@@ -31,8 +31,8 @@ const Vertex = extern struct {
 
 const vertices: []const Vertex = &.{
     .{ .x = -0.5, .y = -0.5, .z = 0.0 },
-    .{ .x = 0.5, .y = -0.5, .z = 0.0 },
-    .{ .x = 0.0, .y = 0.5, .z = 0.0 },
+    .{ .x =  0.5, .y = -0.5, .z = 0.0 },
+    .{ .x =  0.0, .y =  0.5, .z = 0.0 },
 };
 
 const vertexShaderSource =
@@ -49,7 +49,7 @@ const fragmentShaderSource =
     \\out vec4 FragColor;
     \\void main()
     \\{
-    \\   FragColor = vec4(1.0f, 0.25f, 1.0f, 1.0f);
+    \\   FragColor = vec4(1.0f, 0.5f, 1.0f, 1.0f);
     \\}
     ;
 
@@ -71,7 +71,7 @@ pub fn on_start() !void {
     g.gl.bindBuffer(self.vbo, .array_buffer);
     g.gl.vertexArrayVertexBuffer(self.vao, self.vbo, 0, 0, @sizeOf(Vertex));
     log.info("vbo: {x}", .{@intFromEnum(self.vbo)});
-    
+
     g.gl.namedBufferData(
         self.vbo,
         @sizeOf(Vertex) * vertices.len,
@@ -96,7 +96,7 @@ pub fn on_start() !void {
 
     g.gl.enableVertexArrayAttrib(self.vao, 0);
     log.info("enabled attrib", .{});
-    
+
 
     self.shader_program = shader_program: {
         const vertexShader = g.gl.createShader(.vertex);
@@ -123,19 +123,19 @@ pub fn on_start() !void {
 
         const fragmentShader = g.gl.createShader(.fragment);
         defer g.gl.deleteShader(fragmentShader);
-        
+
         {
             const sources = [_][*:0]const u8 {fragmentShaderSource};
 
             g.gl.shaderSource(fragmentShader, sources.len, &sources);
             g.gl.compileShader(fragmentShader);
-            
+
             const compileLog = try g.gl.getShaderInfoLog(fragmentShader, std.heap.page_allocator);
 
             if (compileLog.len != 0) {
                 std.debug.print("Fragment shader compile log:\n{s}\n", .{compileLog});
             }
-            
+
             std.heap.page_allocator.free(compileLog);
 
             if (g.gl.getShaderParameter(fragmentShader, .compile_status) == 0) {
@@ -165,26 +165,9 @@ pub fn on_start() !void {
 
         break :shader_program shader_program;
     };
-
-    log.info("draw: {x}", .{@intFromPtr(&draw)});
 }
 
-comptime {
-    @export(&struct {
-        pub fn wrapper() callconv(.c) G.Signal {
-            draw() catch |err| {
-                log.err("draw error: {s}", .{err});
-                return .panic;
-            };
-
-            return .okay;
-        }
-    }.wrapper, std.builtin.ExportOptions {
-        .name = "draw",
-    });
-}
-
-pub fn draw() !void {
+pub fn on_step() !void {
     g.gl.clearColor(0.2, 0.3, 0.3, 1.0);
     g.gl.clear(.{ .color = true, .depth = true, .stencil = true });
     g.gl.useProgram(self.shader_program);

@@ -13,7 +13,14 @@ pub fn main() !void {
     var app = try Application.init();
     defer app.deinit();
 
-    app.loop();
+    const x = try Application.assets.discover(&app.api);
+    var y = try Application.assets.analyze(&app.api, x);
+    defer y.deinit(&app.api);
+
+    y.dump();
+
+
+    // app.loop();
 
     log.info("main end", .{});
 }
