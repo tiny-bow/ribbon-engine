@@ -337,11 +337,33 @@ pub fn LazyData(comptime T: type) type {
     };
 }
 
+pub fn extractModuleName(module_name: Name, asset_name: Name) !Name {
+    log.info("[{s}] getting module for asset [{s}]", .{module_name, asset_name});
+    var it = std.fs.path.componentIterator(asset_name) catch |err| {
+        log.err("[{s}] failed to iterate asset name as path [{s}]: {}", .{module_name, asset_name, err});
+        return error.InvalidAssetFile;
+    };
+
+    if (it.root() != null) {
+        log.err("[{s}] asset name [{s}] has a root path component; all paths must be relative", .{module_name, asset_name});
+        return error.InvalidAssetFile;
+    }
+
+    const asset_module_name = (it.next() orelse {
+        log.err("[{s}] empty/un-parsable asset name as path [{s}]", .{module_name, asset_name});
+        return error.InvalidAssetFile;
+    }).name;
+
+    return asset_module_name;
+}
+
 pub const Graph = struct {
     discovery: Discovery,
     traversed_asset_cache: std.StringHashMapUnmanaged(Name) = .empty,
     asset_types: std.StringHashMapUnmanaged(AssetType) = .empty,
     edges: std.StringArrayHashMapUnmanaged(NameSet) = .empty,
+    // overridden -> overriding
+    overrides: std.StringHashMapUnmanaged(NameSet) = .empty,
 
     pub fn deinit(self: *Graph, api: *HostApi) void {
         for (self.edges.values()) |*value_ptr| {
@@ -370,17 +392,38 @@ pub const Graph = struct {
             log.info("... analyzed module [{s}]", .{module_name});
         }
 
-        log.info("... analyzed all referenced assets", .{});
+        log.info("... analyzed all referenced assets; binding override edges", .{});
+
+        var overridden_it = self.overrides.iterator();
+        while (overridden_it.next()) |overridden| {
+            const overridden_name = overridden.key_ptr.*;
+            const overrider_set = overridden.value_ptr;
+
+            var edge_it = overrider_set.keyIterator();
+            while (edge_it.next()) |ptr| {
+                const overrider_name = ptr.*;
+                for (self.discovery.mods.keys()) |candidate_name| {
+                    if (std.mem.eql(u8, candidate_name, overridden_name)
+                    or  std.mem.eql(u8, candidate_name, overrider_name)) continue;
+
+                    log.info("checking for overridden edges [{s}] -> [{s}]", .{candidate_name, overridden_name});
+
+                    const candidate_edges = self.edges.get(candidate_name) orelse continue;
+                    if (candidate_edges.contains(overridden_name)) {
+                        log.info("override edge [{s}] -> [{s}] -> [{s}]", .{candidate_name, overridden_name, overrider_name});
+                        self.addEdge(api, candidate_name, overrider_name);
+                    }
+                }
+            }
+        }
+
+        log.info("... finished analyzing assets", .{});
 
         return self;
     }
 
     pub fn addEdge(self: *Graph, api: *HostApi, module_a: Name, module_b: Name) void {
-        log.info("adding edge [{s}] -> [{s}]", .{module_a, module_b});
-
-        if (std.mem.eql(u8, module_a, module_b)) {
-            return;
-        }
+        log.info("checking edge [{s}] -> [{s}]", .{module_a, module_b});
 
         const getOrPut = self.edges.getOrPut(api.allocator.collection, module_a) catch @panic("OOM in collection allocator");
         const outbound_edges = if (getOrPut.found_existing) getOrPut.value_ptr else init: {
@@ -388,6 +431,17 @@ pub const Graph = struct {
             break :init getOrPut.value_ptr;
         };
 
+        if (outbound_edges.contains(module_b)) {
+            log.warn("[{s}] skipping duplicate edge [{s}]", .{module_a, module_b});
+            return;
+        }
+
+        if (std.mem.eql(u8, module_a, module_b)) {
+            log.warn("[{s}] skipping self-edge", .{module_a});
+            return;
+        }
+
+        log.info("adding edge [{s}] -> [{s}]", .{module_a, module_b});
         outbound_edges.put(api.allocator.collection, module_b, {}) catch @panic("OOM in collection allocator");
     }
 
@@ -414,6 +468,10 @@ pub const Graph = struct {
         switch (binding.*) {
             .ref => |asset_name| try self.analyzeAssetByName(api, module_name, asset_type_name, asset_name),
             .override => |override| {
+                const getOrPut = self.overrides.getOrPut(api.allocator.collection, try extractModuleName(module_name, override.old)) catch @panic("OOM in collection allocator");
+                if (!getOrPut.found_existing) getOrPut.value_ptr.* = NameSet.empty;
+                getOrPut.value_ptr.put(api.allocator.collection, try extractModuleName(module_name, override.new), {}) catch @panic("OOM in collection allocator");
+
                 try self.analyzeAssetByName(api, module_name, asset_type_name, override.old);
                 try self.analyzeAssetByName(api, module_name, asset_type_name, override.new);
             },
@@ -423,33 +481,25 @@ pub const Graph = struct {
 
     pub fn analyzeAssetByName(self: *Graph, api: *HostApi, module_name: Name, asset_type_name: Name, asset_name: []const u8) error{AssetTypeMismatch, InvalidAssetFile}!void {
         const exists = if (self.traversed_asset_cache.get(asset_name)) |existing_asset_type_name| exists: {
-            log.info("[{s}] {s} asset `{s}` already traversed", .{module_name, asset_type_name, asset_name});
+            log.info("[{s}] {s} asset [{s}] already traversed", .{module_name, asset_type_name, asset_name});
             if (!std.mem.eql(u8, existing_asset_type_name, asset_type_name)) {
-                log.err("[{s}] {s} asset `{s}` already traversed with different type `{s}`", .{module_name, asset_type_name, asset_name, existing_asset_type_name});
+                log.err("[{s}] {s} asset [{s}] already traversed with different type `{s}`", .{module_name, asset_type_name, asset_name, existing_asset_type_name});
                 return error.AssetTypeMismatch;
             }
             break :exists true;
         } else false;
 
-        if (!exists) self.traversed_asset_cache.put(api.allocator.collection, asset_name, asset_type_name) catch @panic("OOM in collection allocator");
-
-        var it = std.fs.path.componentIterator(asset_name) catch |err| {
-            log.err("[{s}] failed to iterate asset name as path [{s}]: {}", .{module_name, asset_name, err});
-            return error.InvalidAssetFile;
-        };
-
-        if (it.root() != null) {
-            log.err("[{s}] asset name [{s}] has a root path component; all paths must be relative", .{module_name, asset_name});
-            return error.InvalidAssetFile;
+        if (!exists) {
+            log.info("[{s}] {s} asset [{s}] not traversed, adding to cache", .{module_name, asset_type_name, asset_name});
+            self.traversed_asset_cache.put(api.allocator.collection, asset_name, asset_type_name) catch @panic("OOM in collection allocator");
         }
 
-        const asset_module_name = (it.next() orelse {
-            log.err("[{s}] empty/un-parsable asset name as path [{s}]", .{module_name, asset_name});
-            return error.InvalidAssetFile;
-        }).name;
+        const asset_module_name = try extractModuleName(module_name, asset_name);
 
-        if (it.next() == null) {
-            log.err("[{s}] cannot import module [{s}] as asset", .{module_name, asset_module_name});
+        const local_asset_name = asset_name[asset_module_name.len + 1..];
+
+        if (local_asset_name.len == 0) {
+            log.err("[{s}] asset name [{s}] has no local name component; cannot import module as asset", .{module_name, asset_name});
             return error.InvalidAssetFile;
         }
 
@@ -465,11 +515,11 @@ pub const Graph = struct {
             return error.InvalidAssetFile;
         };
 
-        try self.analyzeAssetData(api, asset_module_name, asset_type_name, asset_name, asset_name[asset_module_name.len + 1..], module_dir);
+        try self.analyzeAssetData(api, asset_module_name, asset_type_name, asset_name, local_asset_name, module_dir);
     }
 
     pub fn analyzeAssetData(self: *Graph, api: *HostApi, module_name: Name, asset_type_name: Name, full_asset_name: Name, local_asset_name: Name, dir: std.fs.Dir) error{AssetTypeMismatch, InvalidAssetFile}!void {
-        log.info("[{s}] analyzing {s} asset data [{s}]", .{module_name, asset_type_name, full_asset_name});
+        log.info("[{s}] analyzing new {s} asset data [{s}]", .{module_name, asset_type_name, full_asset_name});
 
         const asset_type = self.asset_types.getPtr(asset_type_name) orelse {
             log.warn("[{s}] no analyzer for {s} asset type, dependencies will not be graphed", .{module_name, asset_type_name});
@@ -621,7 +671,7 @@ pub const Graph = struct {
                 std.debug.print(" (no edges)\n", .{});
             }
         }
-        std.debug.print("  partial assets:\n", .{});
+        std.debug.print("partial assets:\n", .{});
         var asset_it = self.discovery.assets.iterator();
         while (asset_it.next()) |entry| {
             const asset_name = entry.key_ptr.*;
@@ -632,6 +682,85 @@ pub const Graph = struct {
         log.info("... finished dumping graph", .{});
     }
 };
+
+pub fn tarjan_strongConnect(
+    api: *HostApi,
+    graph: *const Graph,
+    module_name: Name,
+    index: *usize,
+    lowlink_map: *std.StringHashMapUnmanaged(usize),
+    index_map: *std.StringHashMapUnmanaged(usize),
+    stack: *std.ArrayListUnmanaged(Name),
+    on_stack: *std.StringHashMapUnmanaged(void),
+    sccs: *std.ArrayListUnmanaged(std.ArrayListUnmanaged(Name)),
+) !void {
+    const idx = index.*;
+    index.* += 1;
+    try index_map.put(api.allocator.temp, module_name, idx);
+    try lowlink_map.put(api.allocator.temp, module_name, idx);
+    stack.append(api.allocator.temp, module_name) catch return error.OutOfMemory;
+    try on_stack.put(api.allocator.temp, module_name, {});
+
+    const outbound = graph.edges.getPtr(module_name) orelse @panic("internal error: module not found in graph");
+    var it = outbound.keyIterator();
+    while (it.next()) |ptr| {
+        const neighbor = ptr.*;
+        if (!index_map.contains(neighbor)) {
+            try tarjan_strongConnect(api, graph, neighbor, index, lowlink_map, index_map, stack, on_stack, sccs);
+            const neighbor_lowlink = lowlink_map.get(neighbor) orelse @panic("lowlink missing for neighbor");
+            const current_lowlink = lowlink_map.get(module_name) orelse @panic("lowlink missing for module");
+            try lowlink_map.put(api.allocator.temp, module_name, @min(current_lowlink, neighbor_lowlink));
+        } else if (on_stack.contains(neighbor)) {
+            const neighbor_index = index_map.get(neighbor) orelse @panic("index missing for neighbor");
+            const current_lowlink = lowlink_map.get(module_name) orelse @panic("lowlink missing for module");
+            try lowlink_map.put(api.allocator.temp, module_name, @min(current_lowlink, neighbor_index));
+        }
+    }
+
+    const module_lowlink = lowlink_map.get(module_name) orelse @panic("lowlink missing for module");
+    if (module_lowlink == idx) {
+        var component = std.ArrayListUnmanaged(Name).empty;
+        errdefer component.deinit(api.allocator.temp);
+
+        while (true) {
+            const node = stack.pop() orelse @panic("internal error: stack underflow");
+            _ = on_stack.remove(node);
+            component.append(api.allocator.temp, node) catch @panic("OOM in collection allocator");
+            if (std.mem.eql(u8, node, module_name)) break;
+        }
+
+        sccs.append(api.allocator.temp, component) catch @panic("OOM in collection allocator");
+    }
+}
+
+pub fn tarjan_scc(api: *HostApi, graph: *const Graph) !std.ArrayListUnmanaged(std.ArrayListUnmanaged(Name)) {
+    var stack = std.ArrayListUnmanaged(Name).empty;
+    defer stack.deinit(api.allocator.temp);
+
+    var index: usize = 0;
+    var lowlink_map = std.StringHashMapUnmanaged(usize).empty;
+    defer lowlink_map.deinit(api.allocator.temp);
+
+    var index_map = std.StringHashMapUnmanaged(usize).empty;
+    defer index_map.deinit(api.allocator.temp);
+
+    var on_stack = std.StringHashMapUnmanaged(void).empty;
+    defer on_stack.deinit(api.allocator.temp);
+
+    var sccs = std.ArrayListUnmanaged(std.ArrayListUnmanaged(Name)).empty;
+    errdefer sccs.deinit(api.allocator.temp);
+
+    var it = graph.discovery.mods.iterator();
+    while (it.next()) |entry| {
+        const module_name = entry.key_ptr.*;
+
+        if (index_map.contains(module_name)) continue;
+
+        try tarjan_strongConnect(api, graph, module_name, &index, &lowlink_map, &index_map, &stack, &on_stack, &sccs);
+    }
+
+    return sccs;
+}
 
 
 pub const Name = []const u8;

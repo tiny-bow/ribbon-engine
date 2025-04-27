@@ -19,6 +19,16 @@ pub fn main() !void {
 
     y.dump();
 
+    const scc = try Application.assets.tarjan_scc(&app.api, &y);
+
+    log.info("SCCs:", .{});
+    for (scc.items, 1..) |component, i| {
+        log.info("  {}:", .{i});
+        for (component.items) |mod| {
+            log.info("    {s}", .{mod});
+        }
+    }
+
 
     // app.loop();
 
