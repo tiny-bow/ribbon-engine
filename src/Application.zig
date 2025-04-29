@@ -7,13 +7,14 @@ const rlfw = @import("rlfw");
 const rgl = @import("rgl");
 const zimalloc = @import("zimalloc");
 
+pub const Window = @import("Window");
 pub const assets = @import("assets");
 pub const HostApi = @import("HostApi");
 pub const HostApi_impl = @import("HostApi_impl");
 const G = HostApi;
 
 cwd: std.fs.Dir,
-window: rlfw.Window,
+window: Window,
 watcher: assets.Watcher,
 stderr_writer: std.fs.File.Writer,
 collection_allocator: CollectionAllocator,
@@ -31,80 +32,9 @@ pub fn init() !*Application {
     const height = 600;
     const self = try std.heap.page_allocator.create(Application);
 
-    self.window = try rlfw.Window.init(width, height, "Triangle", null, null, .{
-        .context = .{
-            .version = .{
-                .major = 4,
-                .minor = 5,
-            },
-            .open_gl = .{ .profile = .core },
-            .debug = true,
-        },
+    try self.window.init(.{
+        .size = .{ .width = width, .height = height },
     });
-
-    self.window.setFramebufferSizeCallback(struct {
-        pub fn framebuffer_size_callback(window: rlfw.Window, size: rlfw.Size) void {
-            _ = window;
-            rgl.viewport(0, 0, size.width, size.height);
-        }
-    }.framebuffer_size_callback);
-
-    try rlfw.makeCurrentContext(self.window);
-
-    rgl.loadExtensions({}, struct {
-        pub fn get_proc_address(_: void, symbol: [:0]const u8) ?rgl.binding.FunctionPointer {
-            return rlfw.getProcAddress(symbol);
-        }
-    }.get_proc_address) catch |err| {
-        std.debug.panic("Failed to initialize rgl: {}", .{err});
-    };
-
-    rgl.debugMessageCallback(self, struct {
-        pub fn gl_debug_handler(_: *Application, source: rgl.DebugSource, msg_type: rgl.DebugMessageType, id: usize, severity: rgl.DebugSeverity, message: []const u8) void {
-            const logger = std.log.scoped(.gl);
-
-            switch (msg_type) {
-                .@"error" => {
-                    logger.err("{s} {s} error #{}: {s}", .{@tagName(source), @tagName(severity), id, message});
-                },
-                .deprecated_behavior => {
-                    logger.warn("{s} {s} deprecated behavior #{}: {s}", .{@tagName(source), @tagName(severity), id, message});
-                },
-                .undefined_behavior => {
-                    logger.err("{s} {s} undefined behavior #{}: {s}", .{@tagName(source), @tagName(severity), id, message});
-                },
-                .portability => {
-                    logger.info("{s} {s} portability #{}: {s}", .{@tagName(source), @tagName(severity), id, message});
-                },
-                .performance => {
-                    logger.info("{s} {s} performance #{}: {s}", .{@tagName(source), @tagName(severity), id, message});
-                },
-                .other => {
-                    logger.info("{s} {s} other #{}: {s}", .{@tagName(source), @tagName(severity), id, message});
-                },
-            }
-        }
-    }.gl_debug_handler);
-
-    app_log.info("vendor: {?s}", .{rgl.getString(.vendor)});
-    app_log.info("renderer: {?s}", .{rgl.getString(.renderer)});
-    app_log.info("version: {?s}", .{rgl.getString(.version)});
-    app_log.info("shading language version: {?s}", .{rgl.getString(.shading_language_version)});
-    app_log.info("glsl version: {?s}", .{rgl.getString(.shading_language_version)});
-    app_log.info("extensions: {?s}", .{rgl.getString(.extensions)});
-
-    const maj = rgl.getInteger(.major_version);
-    const min = rgl.getInteger(.minor_version);
-    app_log.info("{}.{}", .{maj, min});
-    if (maj != 4 or min != 5) {
-        app_log.warn("OpenGL version is {}.{} but 4.5 was requested", .{maj, min});
-    }
-
-    // std.debug.assert(@as(?*const anyopaque, @ptrCast(rgl.binding.function_pointers.glCreateVertexArrays)) != null);
-
-    rgl.viewport(0, 0, width, height);
-
-    try rlfw.swapInterval(0);
 
     self.stderr_writer = std.io.getStdErr().writer();
     self.collection_allocator = try CollectionAllocator.init(std.heap.page_allocator);

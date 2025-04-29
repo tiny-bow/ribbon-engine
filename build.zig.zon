@@ -2,7 +2,6 @@
     .name = .proto1,
     .version = "0.1.0-draft",
     .fingerprint = 0xbaf44f46fc7cf7b5,
-    .minimum_zig_version = "0.15.0-dev.151+6e8493daa",
     .dependencies = .{
         .zimalloc = .{
             .url = "git+https://github.com/dweiller/zimalloc#4c79c3a18b882e725d11be7b191d4c6b031945f0",
@@ -13,6 +12,9 @@
         },
         .rgl = .{
             .path = "../rgl",
+        },
+        .rui = .{
+            .path = "../rui",
         },
         .roml = .{
             .path = "../roml",

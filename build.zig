@@ -19,6 +19,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const rui_dep = b.dependency("rui", .{
+        .target = target,
+        .optimize = optimize,
+        .backend = .custom,
+    });
+
     const roml_dep = b.dependency("roml", .{
         .target = target,
         .optimize = optimize,
@@ -48,6 +54,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const Window_mod = b.createModule(.{
+        .root_source_file = b.path("src/Window.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -62,12 +74,18 @@ pub fn build(b: *std.Build) void {
     Application_mod.addImport("HostApi", HostApi_mod);
     Application_mod.addImport("HostApi_impl", HostApi_impl_mod);
     Application_mod.addImport("assets", assets_mod);
+    Application_mod.addImport("Window", Window_mod);
 
     HostApi_impl_mod.addImport("Application", Application_mod);
     HostApi_impl_mod.addImport("HostApi", HostApi_mod);
     HostApi_impl_mod.addImport("assets", assets_mod);
     HostApi_impl_mod.addImport("rgl", rgl_dep.module("rgl"));
 
+    Window_mod.addImport("rlfw", rlfw_dep.module("rlfw"));
+    Window_mod.addImport("rgl", rgl_dep.module("rgl"));
+    Window_mod.addImport("rui", rui_dep.module("rui"));
+    Window_mod.addImport("HostApi", HostApi_mod);
+    Window_mod.addImport("Application", Application_mod);
 
     assets_mod.addImport("HostApi", HostApi_mod);
     assets_mod.addImport("zimalloc", zimalloc_dep.module("zimalloc"));
@@ -78,11 +96,19 @@ pub fn build(b: *std.Build) void {
 
 
 
+
     const exe = b.addExecutable(.{
         .name = "host",
         .root_module = exe_mod,
     });
 
+    const test_exe = b.addTest(.{
+        .name = "host_test",
+        .root_module = exe_mod,
+    });
+
+    const check = b.step("check", "Run semantic analysis");
+    check.dependOn(&test_exe.step);
 
 
     const install = b.default_step;
