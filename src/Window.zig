@@ -5,6 +5,7 @@ const rlfw = @import("rlfw");
 const rgl = @import("rgl");
 const Application = @import("Application");
 const input = @import("input");
+const linalg = @import("linalg");
 
 pub const Window = @This();
 pub const Context = *Window;
@@ -88,6 +89,7 @@ pub const ProgramInfo = struct {
     window_size: [2]u32,
     render_target_size: [2]u32,
     shader_program: rgl.Program,
+    vertex_array: rgl.VertexArray,
     index_buffer: rgl.Buffer,
     vertex_buffer: rgl.Buffer,
     attrib_locations: struct {
@@ -274,9 +276,10 @@ pub fn init(self: *Window, options: InitOptions) !void {
     );
 
     self.program_info.window_size = .{ options.size.width, options.size.height };
+    self.program_info.render_target_size = self.program_info.window_size;
 
     self.program_info.using_fb = false;
-    self.program_info.framebuffer = rgl.createFramebuffer();
+    self.program_info.framebuffer = rgl.genFramebuffer();
 
     const vertexShader = rgl.createShader(.vertex);
     defer rgl.deleteShader(vertexShader);
@@ -311,8 +314,97 @@ pub fn init(self: *Window, options: InitOptions) !void {
         unreachable;
     }
 
-    self.program_info.index_buffer = rgl.createBuffer();
-    self.program_info.vertex_buffer = rgl.createBuffer();
+    self.program_info.attrib_locations = .{
+        .vertex_position = rgl.getAttribLocation(
+            self.program_info.shader_program,
+            "aVertexPosition",
+        ).?,
+        .vertex_color = rgl.getAttribLocation(
+            self.program_info.shader_program,
+            "aVertexColor",
+        ).?,
+        .texture_coord = rgl.getAttribLocation(
+            self.program_info.shader_program,
+            "aTextureCoord",
+        ).?,
+    };
+    self.program_info.uniform_locations = .{
+        .matrix = rgl.getUniformLocation(
+            self.program_info.shader_program,
+            "uMatrix",
+        ).?,
+        .u_sampler = rgl.getUniformLocation(
+            self.program_info.shader_program,
+            "uSampler",
+        ).?,
+        .use_tex = rgl.getUniformLocation(
+            self.program_info.shader_program,
+            "useTex",
+        ).?,
+    };
+
+
+    self.program_info.vertex_array = rgl.genVertexArray();
+
+    // 2. Bind VAO
+    rgl.bindVertexArray(self.program_info.vertex_array); // <<< BIND VAO FIRST
+
+    // 3. Generate Buffers
+    self.program_info.index_buffer = rgl.genBuffer();
+    self.program_info.vertex_buffer = rgl.genBuffer(); // <<< GENERATE BUFFERS
+
+    // 4. Bind VBO
+    rgl.bindBuffer(self.program_info.vertex_buffer, .array_buffer); // <<< BIND VBO
+
+    // 5. Setup ALL Vertex Attributes (while VAO and VBO are bound)
+    const offset_pos = @offsetOf(rui.Vertex, "pos");
+    const offset_col = @offsetOf(rui.Vertex, "col");
+    const offset_uv = @offsetOf(rui.Vertex, "uv");
+
+    // Position Attribute
+    rgl.vertexAttribPointer(
+        self.program_info.attrib_locations.vertex_position,
+        2, // num components
+        .float,
+        false, // don't normalize
+        @sizeOf(rui.Vertex), // stride
+        offset_pos, // offset
+    );
+    rgl.enableVertexAttribArray(
+        self.program_info.attrib_locations.vertex_position,
+    );
+
+    // Color Attribute
+    rgl.vertexAttribPointer(
+        self.program_info.attrib_locations.vertex_color,
+        4, // num components
+        .unsigned_byte,
+        false, // don't normalize (will be normalized in shader)
+        @sizeOf(rui.Vertex), // stride
+        offset_col, // offset
+    );
+    rgl.enableVertexAttribArray(self.program_info.attrib_locations.vertex_color);
+
+    // Texture Coordinate Attribute
+    rgl.vertexAttribPointer(
+        self.program_info.attrib_locations.texture_coord,
+        2, // num components
+        .float,
+        false, // don't normalize
+        @sizeOf(rui.Vertex), // stride
+        offset_uv, // offset
+    );
+    rgl.enableVertexAttribArray(
+        self.program_info.attrib_locations.texture_coord,
+    );
+
+    // 6. Bind IBO (associates it with the current VAO)
+    rgl.bindBuffer(self.program_info.index_buffer, .element_array_buffer);
+
+    // 7. Unbind VAO (and implicitly the IBO binding for this VAO)
+    // VBO binding (.array_buffer) is global, not part of VAO state, so unbind separately if desired.
+    rgl.bindVertexArray(.invalid);
+    rgl.bindBuffer(.invalid, .array_buffer); // Optional, but clean
 
     self.rui_window = try rui.Window.init(@src(), app.api.allocator.collection, self.backend(), .{});
 }
@@ -375,23 +467,23 @@ pub fn setCursor(self: *Window, cursor: rui.enums.Cursor) void {
     const rlfw_cursor = if (self.cursor_cache[index]) |rlfw_cursor_maybe|
         (if (rlfw_cursor_maybe) |c| c else return) // already failed before, don't log
     else switch (cursor) {
-        .arrow => try rlfw.Cursor.initStandard(rlfw.Cursor.Shape.arrow),
-        .ibeam => try rlfw.Cursor.initStandard(rlfw.Cursor.Shape.ibeam),
-        .wait, .wait_arrow => {
-            log.err("wait and wait_arrow cursor nyi", .{});
-            self.cursor_cache[index] = @as(?rlfw.Cursor, null);
-            return;
-        },
-        // .wait => try rlfw.Cursor.initStandard(rlfw.Cursor.Shape.wait),
-        // .wait_arrow => try rlfw.Cursor.initStandard(rlfw.Cursor.Shape.wait_arrow),
-        .crosshair => try rlfw.Cursor.initStandard(rlfw.Cursor.Shape.crosshair),
-        .arrow_nw_se => try rlfw.Cursor.initStandard(rlfw.Cursor.Shape.Resize.nwse),
-        .arrow_ne_sw => try rlfw.Cursor.initStandard(rlfw.Cursor.Shape.Resize.nesw),
-        .arrow_w_e => try rlfw.Cursor.initStandard(rlfw.Cursor.Shape.Resize.ew),
-        .arrow_n_s => try rlfw.Cursor.initStandard(rlfw.Cursor.Shape.Resize.ns),
-        .arrow_all => try rlfw.Cursor.initStandard(rlfw.Cursor.Shape.Resize.all),
-        .bad => try rlfw.Cursor.initStandard(rlfw.Cursor.Shape.not_allowed),
-        .hand => try rlfw.Cursor.initStandard(rlfw.Cursor.Shape.pointing_hand),
+        .arrow => rlfw.Cursor.initStandard(rlfw.Cursor.Shape.arrow),
+        .ibeam => rlfw.Cursor.initStandard(rlfw.Cursor.Shape.ibeam),
+        .wait, .wait_arrow => error.NotYetImplemented, // TODO implement wait cursors
+        // .wait => rlfw.Cursor.initStandard(rlfw.Cursor.Shape.wait),
+        // .wait_arrow => rlfw.Cursor.initStandard(rlfw.Cursor.Shape.wait_arrow),
+        .crosshair => rlfw.Cursor.initStandard(rlfw.Cursor.Shape.crosshair) ,
+        .arrow_nw_se => rlfw.Cursor.initStandard(rlfw.Cursor.Shape.Resize.nwse) ,
+        .arrow_ne_sw => rlfw.Cursor.initStandard(rlfw.Cursor.Shape.Resize.nesw) ,
+        .arrow_w_e => rlfw.Cursor.initStandard(rlfw.Cursor.Shape.Resize.ew) ,
+        .arrow_n_s => rlfw.Cursor.initStandard(rlfw.Cursor.Shape.Resize.ns) ,
+        .arrow_all => rlfw.Cursor.initStandard(rlfw.Cursor.Shape.Resize.all) ,
+        .bad => rlfw.Cursor.initStandard(rlfw.Cursor.Shape.not_allowed) ,
+        .hand => rlfw.Cursor.initStandard(rlfw.Cursor.Shape.pointing_hand) ,
+    } catch |err| {
+        log.warn("Failed to create cursor {s}: {}", .{@tagName(cursor), err});
+        self.cursor_cache[index] = @as(?rlfw.Cursor, null);
+        return;
     };
 
     self.cursor_cache[index] = @as(?rlfw.Cursor, rlfw_cursor);
@@ -447,12 +539,18 @@ pub fn contentScale(_: *Window) f32 {
 }
 
 pub fn drawClippedTriangles(self: *Window, texture: ?rui.Texture, vertices: []const rui.Vertex, indices: []const u16, maybe_clip_rect: ?rui.Rect) void {
+    rgl.disable(.depth_test);
+    rgl.disable(.cull_face);
+    rgl.disable(.stencil_test);
+
     rgl.enable(.blend);
-    rgl.blendFunc(.one, .one_minus_src_alpha);
+    rgl.blendFunc(.src_alpha, .one_minus_src_alpha);
 
     if (maybe_clip_rect) |clip_rect| {
         rgl.enable(.scissor_test);
         rgl.scissor(@intFromFloat(clip_rect.x), @intFromFloat(clip_rect.y), @intFromFloat(clip_rect.w), @intFromFloat(clip_rect.h));
+    } else {
+        rgl.disable(.scissor_test);
     }
 
     defer {
@@ -472,7 +570,7 @@ pub fn drawClippedTriangles(self: *Window, texture: ?rui.Texture, vertices: []co
         .element_array_buffer,
         u16,
         indices,
-        .static_draw,
+        .dynamic_draw,
     );
 
     rgl.bindBuffer(self.program_info.vertex_buffer, .array_buffer);
@@ -480,88 +578,33 @@ pub fn drawClippedTriangles(self: *Window, texture: ?rui.Texture, vertices: []co
         .array_buffer,
         rui.Vertex,
         vertices,
-        .static_draw,
+        .dynamic_draw,
     );
 
-    var matrix = [1]f32{0} ** 16; // TODO use Matrix4?
-    matrix[0] = 2.0 / @as(f32, @floatFromInt(self.program_info.render_target_size[0]));
-    matrix[1] = 0.0;
-    matrix[2] = 0.0;
-    matrix[3] = 0.0;
-    matrix[4] = 0.0;
-    if (self.program_info.using_fb) {
-        matrix[5] = 2.0 / @as(f32, @floatFromInt(self.program_info.render_target_size[1]));
-    } else {
-        matrix[5] = -2.0 / @as(f32, @floatFromInt(self.program_info.render_target_size[1]));
-    }
-    matrix[6] = 0.0;
-    matrix[7] = 0.0;
-    matrix[8] = 0.0;
-    matrix[9] = 0.0;
-    matrix[10] = 1.0;
-    matrix[11] = 0.0;
-    matrix[12] = -1.0;
-    if (self.program_info.using_fb) {
-        matrix[13] = -1.0;
-    } else {
-        matrix[13] = 1.0;
-    }
-    matrix[14] = 0.0;
-    matrix[15] = 1.0;
+    const hw = 2.0 / @as(f32, @floatFromInt(self.program_info.render_target_size[0]));
 
-    const offset_pos = @offsetOf(rui.Vertex, "pos");
-    const offset_col = @offsetOf(rui.Vertex, "col");
-    const offset_uv = @offsetOf(rui.Vertex, "uv");
+    const hh =
+        if (self.program_info.using_fb) 2.0 / @as(f32, @floatFromInt(self.program_info.render_target_size[1]))
+        else -2.0 / @as(f32, @floatFromInt(self.program_info.render_target_size[1]));
 
-    // vertex
-    rgl.bindBuffer(self.program_info.vertex_buffer, .array_buffer);
-    rgl.vertexAttribPointer(
-        self.program_info.attrib_locations.vertex_position,
-        2, // num components
-        .float,
-        false, // don't normalize
-        @sizeOf(rui.Vertex), // stride
-        offset_pos, // offset
-    );
-    rgl.enableVertexAttribArray(
-        self.program_info.attrib_locations.vertex_position,
-    );
+    const y: f32 = if (self.program_info.using_fb) -1.0 else 1.0;
 
-    // color
-    rgl.bindBuffer(self.program_info.vertex_buffer, .array_buffer);
-    rgl.vertexAttribPointer(
-        self.program_info.attrib_locations.vertex_color,
-        4, // num components
-        .unsigned_byte,
-        false, // don't normalize
-        @sizeOf(rui.Vertex), // stride
-        offset_col, // offset
-    );
-    rgl.enableVertexAttribArray(
-        self.program_info.attrib_locations.vertex_color,
-    );
+    var matrix = linalg.Matrix4{
+        .{ hw,  0, 0, 0 },
+        .{  0, hh, 0, 0 },
+        .{  0,  0, 1, 0 },
+        .{ -1,  y, 0, 1 },
+    };
 
-    // texture
-    rgl.bindBuffer(self.program_info.vertex_buffer, .array_buffer);
-    rgl.vertexAttribPointer(
-        self.program_info.attrib_locations.texture_coord,
-        2, // num components
-        .float,
-        false, // don't normalize
-        @sizeOf(rui.Vertex), // stride
-        offset_uv, // offset
-    );
-    rgl.enableVertexAttribArray(
-        self.program_info.attrib_locations.texture_coord,
-    );
 
     // bind program
+    rgl.bindVertexArray(self.program_info.vertex_array);
     rgl.useProgram(self.program_info.shader_program);
 
     // Set the shader uniforms
     rgl.uniformMatrix4fv(
         self.program_info.uniform_locations.matrix,
-        false,
+        false, // matrix transpose
         @ptrCast(&matrix),
     );
 
@@ -598,7 +641,7 @@ pub fn drawClippedTriangles(self: *Window, texture: ?rui.Texture, vertices: []co
 }
 
 pub fn textureCreate(_: *Window, pixels: [*]u8, width: u32, height: u32, interpolation: rui.enums.TextureInterpolation) rui.Texture {
-    const texture = rgl.createTexture(.@"2d");
+    const texture = rgl.genTexture();
 
     rgl.bindTexture(texture, .@"2d");
 
@@ -664,7 +707,7 @@ pub fn textureDestroy(_: *Window, texture: rui.Texture) void {
 }
 
 pub fn textureCreateTarget(_: *Window, width: u32, height: u32, interpolation: rui.enums.TextureInterpolation) !rui.TextureTarget {
-    const texture = rgl.createTexture(.@"2d");
+    const texture = rgl.genTexture();
 
     rgl.bindTexture(texture, .@"2d");
 

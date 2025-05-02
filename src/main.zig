@@ -30,7 +30,7 @@ pub fn main() !void {
     // }
 
 
-    app.loop();
+    try app.loop();
 
     log.info("main end", .{});
 }

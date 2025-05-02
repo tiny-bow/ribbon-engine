@@ -5,6 +5,7 @@ const app_log = std.log.scoped(.application);
 
 const rlfw = @import("rlfw");
 const rgl = @import("rgl");
+const rui = @import("rui");
 const zimalloc = @import("zimalloc");
 
 pub const Window = @import("Window");
@@ -143,8 +144,15 @@ pub fn reload(self: *Application, rld: G.ReloadType) !void {
     }
 }
 
-pub fn loop(self: *Application) void {
+pub fn loop(self: *Application) !void {
     // const error_sleep_time = 10;
+
+    // var loading_window_open: bool = true;
+    // var loading_window_rect: rui.Rect = .{ .x = 1, .y = 1, .w = 400, .h = 400 };
+
+    var running_timer = std.time.Timer.start() catch unreachable;
+
+    var frame_timer = std.time.Timer.start() catch unreachable;
 
     loop: while (!self.window.rlfw_window.shouldClose() and !self.api.shutdown.load(.unordered)) {
         @branchHint(.likely);
@@ -174,6 +182,15 @@ pub fn loop(self: *Application) void {
 
         rlfw.pollEvents();
 
+        _ = frame_timer.lap();
+        _ = running_timer.read();
+
+        try rlfw.makeCurrentContext(self.window.rlfw_window);
+        rgl.clearColor(0.2, 0.3, 0.3, 1.0);
+        rgl.clear(.{ .color = true, .depth = true, .stencil = true });
+
+        try self.window.rui_window.begin(std.time.nanoTimestamp());
+
         // assets.Watcher.mutex.lock(); FIXME
 
         // assets.stepBinaries() catch |err| {
@@ -186,11 +203,35 @@ pub fn loop(self: *Application) void {
 
         // assets.Watcher.mutex.unlock();
 
+        {
+            var float = try rui.floatingWindow(@src(), .{}, .{ .max_size_content = .{ .w = 400, .h = 400 } });
+            defer float.deinit();
+
+            try rui.windowHeader("Floating Window", "", null);
+
+            var scroll = try rui.scrollArea(@src(), .{}, .{ .expand = .both, .color_fill = .{ .name = .fill_window } });
+            defer scroll.deinit();
+
+            var tl = try rui.textLayout(@src(), .{}, .{ .expand = .horizontal, .font_style = .title_4 });
+            const lorem = "This example shows how to use rui for floating windows on top of an existing application.";
+            try tl.addText(lorem, .{});
+            tl.deinit();
+        }
+
+        _ = try self.window.rui_window.end(.{
+            .show_toasts = true,
+        });
+
+        if (self.window.rui_window.cursorRequestedFloating()) |cursor| {
+            // cursor is over floating window, rui sets it
+            self.window.setCursor(cursor);
+        } else {
+            // cursor should be handled by application
+            self.window.setCursor(.arrow);
+        }
+
         rgl.flush(); // shouldn't be necessary, but is on my machine :P
 
-        self.window.rlfw_window.swapBuffers() catch {
-            @branchHint(.cold);
-            @panic("failed to swap window buffers");
-        };
+        try self.window.rlfw_window.swapBuffers();
     }
 }

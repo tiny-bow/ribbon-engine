@@ -82,6 +82,7 @@ pub fn build(b: *std.Build) void {
 
     Application_mod.addImport("zimalloc", zimalloc_dep.module("zimalloc"));
     Application_mod.addImport("rlfw", rlfw_dep.module("rlfw"));
+    Application_mod.addImport("rui", rui_dep.module("rui"));
     Application_mod.addImport("rgl", rgl_dep.module("rgl"));
     Application_mod.addImport("HostApi", HostApi_mod);
     Application_mod.addImport("HostApi_impl", HostApi_impl_mod);
@@ -96,9 +97,10 @@ pub fn build(b: *std.Build) void {
     Window_mod.addImport("rlfw", rlfw_dep.module("rlfw"));
     Window_mod.addImport("rgl", rgl_dep.module("rgl"));
     Window_mod.addImport("rui", rui_dep.module("rui"));
+    Window_mod.addImport("linalg", linalg_mod);
+    Window_mod.addImport("input", input_mod);
     Window_mod.addImport("HostApi", HostApi_mod);
     Window_mod.addImport("Application", Application_mod);
-    Window_mod.addImport("input", input_mod);
 
     rui_dep.module("rui").addImport("backend", Window_mod);
 

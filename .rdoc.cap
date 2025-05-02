@@ -5,7 +5,7 @@
         "commandLine": "",
         "environment": [
         ],
-        "executable": "/home/nox/projects/planes/proto1/zig-out/bin/host",
+        "executable": "./zig-out/bin/host",
         "inject": false,
         "numQueuedFrames": 0,
         "options": {
@@ -23,6 +23,6 @@
             "verifyBufferAccess": false
         },
         "queuedFrameCap": 0,
-        "workingDir": "/home/nox/projects/planes/proto1"
+        "workingDir": "."
     }
 }
