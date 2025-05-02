@@ -60,6 +60,18 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const input_mod = b.createModule(.{
+        .root_source_file = b.path("src/input.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const linalg_mod = b.createModule(.{
+        .root_source_file = b.path("src/linalg.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -86,11 +98,16 @@ pub fn build(b: *std.Build) void {
     Window_mod.addImport("rui", rui_dep.module("rui"));
     Window_mod.addImport("HostApi", HostApi_mod);
     Window_mod.addImport("Application", Application_mod);
+    Window_mod.addImport("input", input_mod);
+
+    rui_dep.module("rui").addImport("backend", Window_mod);
 
     assets_mod.addImport("HostApi", HostApi_mod);
     assets_mod.addImport("zimalloc", zimalloc_dep.module("zimalloc"));
     assets_mod.addImport("rgl", rgl_dep.module("rgl"));
     assets_mod.addImport("roml", roml_dep.module("roml"));
+
+    input_mod.addImport("linalg", linalg_mod);
 
     exe_mod.addImport("Application", Application_mod);
 

@@ -28,13 +28,7 @@ pub const CollectionAllocator = zimalloc.Allocator(.{});
 pub fn init() !*Application {
     try rlfw.init(.{});
 
-    const width = 800;
-    const height = 600;
     const self = try std.heap.page_allocator.create(Application);
-
-    try self.window.init(.{
-        .size = .{ .width = width, .height = height },
-    });
 
     self.stderr_writer = std.io.getStdErr().writer();
     self.collection_allocator = try CollectionAllocator.init(std.heap.page_allocator);
@@ -78,6 +72,11 @@ pub fn init() !*Application {
     self.api.allocator.frame = self.api.heap.frame.allocator();
     self.api.allocator.long_term = self.api.heap.long_term.allocator();
     self.api.allocator.static = self.api.heap.static.allocator();
+
+
+    try self.window.init(.{
+        .size = .{ .width = 800, .height = 600 },
+    });
 
     inline for (comptime std.meta.declarations(HostApi_impl)) |lib_decl| {
         const lib = comptime @field(HostApi_impl, lib_decl.name);
@@ -145,9 +144,9 @@ pub fn reload(self: *Application, rld: G.ReloadType) !void {
 }
 
 pub fn loop(self: *Application) void {
-    const error_sleep_time = 10;
+    // const error_sleep_time = 10;
 
-    loop: while (!self.window.shouldClose() and !self.api.shutdown.load(.unordered)) {
+    loop: while (!self.window.rlfw_window.shouldClose() and !self.api.shutdown.load(.unordered)) {
         @branchHint(.likely);
 
         const rld = self.api.reload.load(.acquire);
@@ -177,19 +176,19 @@ pub fn loop(self: *Application) void {
 
         // assets.Watcher.mutex.lock(); FIXME
 
-        assets.stepBinaries() catch |err| {
-            @branchHint(.cold);
-            app_log.err("failed to step assets: {}; sleeping main thread {}s", .{err, error_sleep_time});
-            // assets.Watcher.mutex.unlock();
-            std.Thread.sleep(error_sleep_time * std.time.ns_per_s);
-            continue :loop;
-        };
+        // assets.stepBinaries() catch |err| {
+        //     @branchHint(.cold);
+        //     app_log.err("failed to step assets: {}; sleeping main thread {}s", .{err, error_sleep_time});
+        //     // assets.Watcher.mutex.unlock();
+        //     std.Thread.sleep(error_sleep_time * std.time.ns_per_s);
+        //     continue :loop;
+        // };
 
         // assets.Watcher.mutex.unlock();
 
         rgl.flush(); // shouldn't be necessary, but is on my machine :P
 
-        self.window.swapBuffers() catch {
+        self.window.rlfw_window.swapBuffers() catch {
             @branchHint(.cold);
             @panic("failed to swap window buffers");
         };

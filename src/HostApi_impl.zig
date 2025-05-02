@@ -64,9 +64,9 @@ pub const binary = struct {
 pub const win = struct {
     pub fn close(self: *const G.Api.win) callconv(.c) void {
         const api: *HostApi = @constCast(@fieldParentPtr("win", self));
-        const app: *Application = @fieldParentPtr("api", api);
+        const app: *Application = @alignCast(@fieldParentPtr("api", api));
 
-        app.window.close(true);
+        app.api.shutdown.store(true, .release);
     }
 };
 

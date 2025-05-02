@@ -298,35 +298,6 @@ pub fn extractAssetRefInfo(comptime T: type) ?struct { Name, bool } {
     }
 }
 
-pub const ShaderProgram = struct {
-    gpu: ?rgl.Program = null,
-    vert: ?AssetRef(Shader) = null,
-    frag: ?AssetRef(Shader) = null,
-
-    pub const asset_type = AssetType {
-        .name = "shader_program",
-        .vtable = &struct {
-            pub const vtable = AssetType.VTable {
-                .analyze = AssetType.VTable.Analyzer.autoToml(ShaderProgram, "shader_program"),
-            };
-        }.vtable,
-    };
-};
-
-pub const Shader = struct {
-    gpu: ?rgl.Shader,
-    src: LazyBytes,
-
-    pub const asset_type = AssetType {
-        .name = "shader",
-        .vtable = &struct {
-            pub const vtable = AssetType.VTable {
-                .analyze = .none,
-            };
-        }.vtable,
-    };
-};
-
 pub const LazyBytes = LazyData(u8);
 
 pub fn LazyData(comptime T: type) type {
@@ -359,8 +330,8 @@ pub fn extractModuleName(module_name: Name, asset_name: Name) !Name {
 
 pub const Graph = struct {
     discovery: Discovery,
+    asset_types: *const std.StringHashMapUnmanaged(AssetType),
     traversed_asset_cache: std.StringHashMapUnmanaged(Name) = .empty,
-    asset_types: std.StringHashMapUnmanaged(AssetType) = .empty,
     edges: std.StringArrayHashMapUnmanaged(NameSet) = .empty,
     // overridden -> overriding
     overrides: std.StringHashMapUnmanaged(NameSet) = .empty,
@@ -373,14 +344,11 @@ pub const Graph = struct {
         self.edges.deinit(api.allocator.collection);
     }
 
-    pub fn analyze(api: *HostApi, discovery: Discovery) error{AssetTypeMismatch, InvalidAssetFile}!Graph {
+    pub fn analyze(api: *HostApi, asset_types: *const std.StringHashMapUnmanaged(AssetType), discovery: Discovery) error{AssetTypeMismatch, InvalidAssetFile}!Graph {
         log.info("analyzing assets ...", .{});
 
-        var self: Graph = .{ .discovery = discovery };
+        var self: Graph = .{ .discovery = discovery, .asset_types = asset_types };
         errdefer self.deinit(api);
-
-        self.asset_types.put(api.allocator.collection, ShaderProgram.asset_type.name, ShaderProgram.asset_type) catch @panic("OOM in collection allocator");
-        self.asset_types.put(api.allocator.collection, Shader.asset_type.name, Shader.asset_type) catch @panic("OOM in collection allocator");
 
         var it = self.discovery.mods.iterator();
         while (it.next()) |entry| {

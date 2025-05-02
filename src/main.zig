@@ -13,24 +13,24 @@ pub fn main() !void {
     var app = try Application.init();
     defer app.deinit();
 
-    const x = try Application.assets.discover(&app.api);
-    var y = try Application.assets.analyze(&app.api, x);
-    defer y.deinit(&app.api);
+    // const x = try Application.assets.discover(&app.api);
+    // var y = try Application.assets.analyze(&app.api, x);
+    // defer y.deinit(&app.api);
 
-    y.dump();
+    // y.dump();
 
-    const scc = try Application.assets.tarjan_scc(&app.api, &y);
+    // const scc = try Application.assets.tarjan_scc(&app.api, &y);
 
-    log.info("SCCs:", .{});
-    for (scc.items, 1..) |component, i| {
-        log.info("  {}:", .{i});
-        for (component.items) |mod| {
-            log.info("    {s}", .{mod});
-        }
-    }
+    // log.info("SCCs:", .{});
+    // for (scc.items, 1..) |component, i| {
+    //     log.info("  {}:", .{i});
+    //     for (component.items) |mod| {
+    //         log.info("    {s}", .{mod});
+    //     }
+    // }
 
 
-    // app.loop();
+    app.loop();
 
     log.info("main end", .{});
 }
