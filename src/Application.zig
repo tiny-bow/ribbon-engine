@@ -9,6 +9,9 @@ const rui = @import("rui");
 const zimalloc = @import("zimalloc");
 
 pub const Window = @import("Window");
+pub const linalg = @import("linalg");
+pub const surface = @import("surface");
+pub const ecs = @import("ecs");
 pub const assets = @import("assets");
 pub const HostApi = @import("HostApi");
 pub const HostApi_impl = @import("HostApi_impl");

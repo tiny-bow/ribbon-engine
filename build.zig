@@ -72,6 +72,24 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const SlotMap_mod = b.createModule(.{
+        .root_source_file = b.path("src/SlotMap.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const surface_mod = b.createModule(.{
+        .root_source_file = b.path("src/surface.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const ecs_mod = b.createModule(.{
+        .root_source_file = b.path("src/ecs.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -87,6 +105,9 @@ pub fn build(b: *std.Build) void {
     Application_mod.addImport("HostApi", HostApi_mod);
     Application_mod.addImport("HostApi_impl", HostApi_impl_mod);
     Application_mod.addImport("assets", assets_mod);
+    Application_mod.addImport("linalg", linalg_mod);
+    Application_mod.addImport("surface", surface_mod);
+    Application_mod.addImport("ecs", ecs_mod);
     Application_mod.addImport("Window", Window_mod);
 
     HostApi_impl_mod.addImport("Application", Application_mod);
@@ -110,6 +131,9 @@ pub fn build(b: *std.Build) void {
     assets_mod.addImport("roml", roml_dep.module("roml"));
 
     input_mod.addImport("linalg", linalg_mod);
+
+    ecs_mod.addImport("HostApi", HostApi_mod);
+    ecs_mod.addImport("SlotMap", SlotMap_mod);
 
     exe_mod.addImport("Application", Application_mod);
 
