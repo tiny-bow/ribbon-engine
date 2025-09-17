@@ -15,5 +15,6 @@
 
 This is the main repo for the Ribbon realtime software engine.
 
-This project is still in the very early development stages. For now, issues are
-turned off and pull requests without [prior discussion](https://tinybow.org) are discouraged.
+The [Ribbon Programming Language](https://github.com/tiny-bow/ribbon-language) is still a work in progress, so this repo currently just serves as a sandbox for testing and brainstorming.
+
+For now, issues are turned off and pull requests without [prior discussion](https://tinybow.org) are discouraged.
